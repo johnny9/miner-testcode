@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.coverage
+.mypy_cache/
+.ruff_cache/
+
+# Local hardware coordinates and run output do not belong in source control.
+config.local.toml
+artifacts/

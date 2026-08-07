@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "miner-testcode"
+version = "0.1.0"
+description = "Asynchronous end-to-end test runner for Bitcoin mining devices"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [
+  { name = "BZM" },
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Framework :: AsyncIO",
+  "Programming Language :: Python :: 3",
+  "Topic :: Software Development :: Testing",
+]
+
+[project.scripts]
+miner-test = "miner_testcode.runner:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
