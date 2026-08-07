@@ -1,0 +1,117 @@
+[runner]
+artifacts_dir = "../artifacts"
+tests_dir = "../tests/e2e"
+pattern = "test*.py"
+verbosity = 2
+log_level = "INFO"
+cleanup_timeout = 120
+
+[publishers.local]
+enabled = true
+required = true
+filename = "report.html"
+json_filename = "result.json"
+
+[publishers.github]
+enabled = false
+required = true
+name = "miner-testcode / hardware-e2e"
+api_url = "https://api.github.com"
+token_env = "GITHUB_TOKEN"
+repository_env = "GITHUB_REPOSITORY"
+sha_env = "GITHUB_SHA"
+details_url_env = "MINER_TEST_DETAILS_URL"
+timeout = 20
+
+[publishers.mining_qa_status]
+enabled = false
+required = true
+base_url = "https://mining-qa-status.vercel.app"
+token_env = "MINING_QA_TOKEN"
+repository_env = "GITHUB_REPOSITORY"
+commit_sha_env = "GITHUB_SHA"
+target_type = "bitaxe"
+target_name = "Bitaxe Bonanza 1002"
+suite = "miner-testcode"
+title = "Bitaxe Bonanza end-to-end qualification"
+upload_artifacts = true
+timeout = 30
+upload_timeout = 120
+artifact_globs = [
+  "result.json",
+  "report.html",
+  "runner.log",
+  "events.jsonl",
+  "**/test.log",
+  "**/device-state.jsonl",
+  "**/serial.log",
+  "**/device-api.log",
+  "**/stratum-probe.json",
+]
+
+[[devices]]
+name = "bonanza-lab-1"
+type = "bitaxe_bonanza"
+enabled = true
+
+[devices.options]
+# Set true for observational runs. The API transport will reject every write.
+read_only = false
+# Required only if a test opts into changing the write-only pool password.
+# baseline_stratum_password_env = "MINER_CURRENT_POOL_PASSWORD"
+
+[devices.interfaces.api]
+base_url = "http://bitaxe.local"
+timeout = 5
+retries = 2
+retry_backoff = 0.5
+poll_interval = 2
+online_timeout = 120
+log_max_bytes = 67108864
+
+[devices.interfaces.serial]
+# Prefer /dev/serial/by-id over /dev/ttyACM0 so reconnects do not change identity.
+port = "/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_*-if00"
+baudrate = 115200
+capture = true
+required = false
+flash_timeout = 300
+
+# This command is never passed through a shell. It is enabled as a capability
+# but only executed when upgrade.method="usb" and upgrade.enabled=true.
+flash_command = [
+  "python3", "-m", "esptool", "--chip", "esp32s3", "--port", "{port}",
+  "write-flash", "0x0", "{factory}",
+]
+
+[devices.interfaces.upgrade]
+enabled = false
+method = "ota" # "ota" or "usb"
+expected_version = "v0.1.0-beta.3"
+application = "../../esp-miner-bonanza/build/esp-miner.bin"
+web = "../../esp-miner-bonanza/build/www.bin"
+factory = "../../artifacts/esp-miner-bonanza/factory-image.bin"
+chunk_size = 4096
+pace_seconds = 0.01
+timeout = 240
+
+[tests.public_pool_smoke]
+host = "public-pool.io"
+port = 3333
+tls = false
+# The environment is the default source for pool identity.
+username_env = "MINER_TEST_POOL_USER"
+password_env = "MINER_TEST_POOL_PASSWORD"
+configure_device = true
+configure_device_password = false
+# Literal values are also supported, but environment variables keep local
+# payout configuration out of TOML and artifacts.
+# username = "bc1...worker"
+suggested_difficulty = 1000
+min_hashrate_ghs = 100
+max_work_age_seconds = 60
+readiness_timeout = 120
+stable_samples = 3
+probe_timeout = 30
+require_accepted_share = false
+accepted_share_timeout = 300
