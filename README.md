@@ -23,6 +23,8 @@ device is monitored over HTTP and its ESP USB serial log is captured.
   post-reboot version verification.
 - Per-test baseline capture and restoration of pool settings and pause state.
 - Runner, test, serial, device API, normalized state, upgrade, and outcome logs.
+- A publication privacy pass that redacts pool identities and removes host,
+  device, configuration, and artifact absolute paths from text evidence.
 - A generic Public Pool smoke test using `unittest.IsolatedAsyncioTestCase`.
 - Configurable local HTML/JSON, GitHub Check Run, and Mining QA Status result
   publishers.
@@ -78,6 +80,7 @@ base_url = "http://bitaxe.local"
 
 [devices.options]
 read_only = false
+publication_name = "Bitaxe Bonanza 1002"
 
 [devices.interfaces.serial]
 port = "/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_*-if00"
@@ -117,6 +120,12 @@ the device's existing pool host and port.
 The target firmware becomes the run baseline. It is not automatically rolled
 back after each test; mutable device settings are. This avoids repeatedly
 flashing hardware while still giving every test a clean configuration.
+
+`devices.options.publication_name` is the stable device label used in reports,
+artifact names, and remote payloads. The private configuration name remains
+available for local device selection but is replaced before publication. MAC
+addresses, private IP addresses, Wi-Fi identifiers, and pool identities are
+also removed from published text evidence.
 
 ## Run
 
@@ -159,6 +168,19 @@ is required by default: if publishing fails, the command exits unsuccessfully in
 addition to preserving the test result and local artifacts. Set `required=false`
 for a best-effort destination.
 
+Before either remote publisher runs, the runner resolves its own GitHub `origin`
+and exact `HEAD`. Remote publication is refused if tracked harness code is dirty
+or that commit is not present in a local `origin/*` ref. Results therefore carry
+two distinct revisions: the configured firmware repository/commit under test and
+the automatically discovered `miner-testcode` revision that executed it. Every
+test result links to its exact GitHub blob and source line.
+
+Published text artifacts receive a final privacy pass. Paths inside this
+repository become relative, artifact paths become `<artifacts>/...`, unrelated
+absolute host or device paths become `<local-path>`, and configured pool
+identities and keyed secrets are redacted. Publisher metadata uses relative
+report names rather than `file://` URLs.
+
 ### Local HTML
 
 ```toml
@@ -172,6 +194,8 @@ json_filename = "result.json"
 `report.html` summarizes the native unittest results and links to every log and
 artifact in each test directory. `result.json` contains the same aggregate data
 for other automation. Both are written inside the timestamped run directory.
+The report header links to the exact test-harness commit, and each test name
+links to the executed test method at that commit.
 
 ### GitHub Check Run
 
@@ -203,7 +227,7 @@ A normal personal access token cannot create a Check Run. For a local runner,
 set the configured token variable to a GitHub App installation token. The check
 is created directly in its terminal state and includes the test table. If Mining
 QA Status also publishes successfully, its durable result page becomes the
-check's details URL.
+check's details URL. The Check summary includes the same pinned test-code links.
 
 ### Mining QA Status
 

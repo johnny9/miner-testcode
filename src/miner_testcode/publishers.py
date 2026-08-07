@@ -16,6 +16,7 @@ from urllib.request import Request, urlopen
 
 from .artifacts import append_jsonl
 from .errors import ConfigError, MinerTestError
+from .redaction import redact_text
 from .results import PublisherRecord, RunSummary, iso_timestamp
 
 _REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
@@ -178,8 +179,8 @@ class LocalHtmlPublisher:
             name=self.name,
             success=True,
             required=required,
-            url=html_path.resolve().as_uri(),
-            detail=str(html_path),
+            url=html_path.name,
+            detail=html_path.name,
         )
 
     @staticmethod
@@ -207,12 +208,18 @@ class LocalHtmlPublisher:
                     + html.escape(record.detail)
                     + "</pre></details>"
                 )
+            test_label = f"<code>{html.escape(record.test_id)}</code>"
+            if record.source_url:
+                test_label = (
+                    f'<a href="{html.escape(record.source_url, quote=True)}" '
+                    f'target="_blank" rel="noreferrer">{test_label} ↗</a>'
+                )
             rows.append(
                 "<tr>"
                 f'<td><span class="status {html.escape(record.outcome)}">'
                 f"{html.escape(record.outcome)}</span></td>"
                 f"<td>{html.escape(record.device)}</td>"
-                f"<td><code>{html.escape(record.test_id)}</code>{detail}</td>"
+                f"<td>{test_label}{detail}</td>"
                 f"<td>{record.elapsed_seconds:.3f}s</td>"
                 f"<td>{self._artifact_links(summary, record.artifact_dir)}</td>"
                 "</tr>"
@@ -232,6 +239,16 @@ class LocalHtmlPublisher:
         ):
             root_links.append(
                 f'<a href="{quote(path.name)}">{html.escape(path.name)}</a>'
+            )
+        test_code = ""
+        if summary.test_code:
+            source = summary.test_code
+            commit_url = f"{source.url}/tree/{source.commit_sha}"
+            test_code = (
+                '<p class="muted">Test code: '
+                f'<a href="{html.escape(commit_url, quote=True)}" target="_blank" '
+                f'rel="noreferrer">{html.escape(source.repository)}@'
+                f'{html.escape(source.commit_sha[:12])} ↗</a></p>'
             )
         return f"""<!doctype html>
 <html lang="en">
@@ -259,6 +276,7 @@ pre {{ max-width: 75vw; overflow: auto; white-space: pre-wrap; }}
 <body>
 <h1>miner-testcode result</h1>
 <p class="muted">Run {html.escape(summary.run_id)} · {iso_timestamp(summary.started_at)} · {summary.duration_seconds:.3f}s</p>
+{test_code}
 <div class="cards">
   <div class="card"><span>Status</span><strong>{html.escape(summary.status)}</strong></div>
   <div class="card"><span>Tests</span><strong>{summary.tests_run}</strong></div>
@@ -389,8 +407,20 @@ class GithubCheckPublisher:
         for record in summary.tests[:100]:
             test_id = record.test_id.replace("|", "\\|")
             device = record.device.replace("|", "\\|")
+            test_cell = f"`{test_id}`"
+            if record.source_url:
+                test_cell = f"[`{test_id}`]({record.source_url})"
             lines.append(
-                f"| {device} | `{test_id}` | {record.outcome} | {record.elapsed_seconds:.3f}s |"
+                f"| {device} | {test_cell} | {record.outcome} | {record.elapsed_seconds:.3f}s |"
+            )
+        if summary.test_code:
+            source = summary.test_code
+            lines.extend(
+                [
+                    "",
+                    f"Test harness: [{source.repository}@{source.commit_sha[:12]}]"
+                    f"({source.url}/tree/{source.commit_sha})",
+                ]
             )
         if len(summary.tests) > 100:
             lines.append(f"\n{len(summary.tests) - 100} additional tests omitted.")
@@ -508,6 +538,7 @@ class MiningQaStatusPublisher:
                 "name": record.test_id,
                 "passed": record.passed,
                 "detail": f"{record.device}: {record.outcome} in {record.elapsed_seconds:.3f}s",
+                "url": record.source_url,
             }
             for record in summary.tests
         ]
@@ -537,6 +568,18 @@ class MiningQaStatusPublisher:
             "details": {
                 "passed": summary.successful,
                 "checks": checks,
+                "test_code": (
+                    {
+                        "repository": summary.test_code.repository,
+                        "commit_sha": summary.test_code.commit_sha,
+                        "url": (
+                            f"{summary.test_code.url}/tree/"
+                            f"{summary.test_code.commit_sha}"
+                        ),
+                    }
+                    if summary.test_code
+                    else None
+                ),
                 "result": summary.to_dict(detail_limit=2000),
             },
         }
@@ -673,13 +716,18 @@ class PublisherManager:
             try:
                 local.publish(summary)
             except Exception as exc:
-                self.logger.error("could not finalize local result report: %s", exc)
+                safe_detail = redact_text(
+                    str(exc), artifact_root=summary.artifact_root
+                )
+                self.logger.error(
+                    "could not finalize local result report: %s", safe_detail
+                )
                 summary.publishers.append(
                     PublisherRecord(
                         name="local_finalize",
                         success=False,
                         required=_required(local_config),
-                        detail=str(exc),
+                        detail=safe_detail,
                     )
                 )
         return not any(record.required and not record.success for record in summary.publishers)
@@ -689,12 +737,15 @@ class PublisherManager:
             record = operation(summary)
             self.logger.info("published result through %s%s", name, f": {record.url}" if record.url else "")
         except Exception as exc:
-            self.logger.error("result publisher %s failed: %s", name, exc)
+            safe_detail = redact_text(
+                str(exc), artifact_root=summary.artifact_root
+            )
+            self.logger.error("result publisher %s failed: %s", name, safe_detail)
             record = PublisherRecord(
                 name=name,
                 success=False,
                 required=required,
-                detail=f"{type(exc).__name__}: {exc}",
+                detail=f"{type(exc).__name__}: {safe_detail}",
             )
         summary.publishers.append(record)
         append_jsonl(

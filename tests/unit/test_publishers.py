@@ -14,7 +14,7 @@ from miner_testcode.publishers import (
     PublisherManager,
     PublishError,
 )
-from miner_testcode.results import RunSummary, TestRecord
+from miner_testcode.results import RunSummary, TestCodeRecord, TestRecord
 
 
 class FakeTransport:
@@ -86,6 +86,13 @@ def make_summary(root: Path, *, successful: bool = True) -> RunSummary:
                 elapsed_seconds=4.0,
                 detail=None if successful else "assertion failed",
                 artifact_dir=case.name,
+                source_path="tests/e2e/test_public_pool_smoke.py",
+                source_line=22,
+                source_url=(
+                    "https://github.com/owner/miner-testcode/blob/"
+                    "abcdef0123456789abcdef0123456789abcdef01/"
+                    "tests/e2e/test_public_pool_smoke.py#L22"
+                ),
             ),
         ),
         tests_run=1,
@@ -95,6 +102,12 @@ def make_summary(root: Path, *, successful: bool = True) -> RunSummary:
         expected_failures=0,
         unexpected_successes=0,
         successful=successful,
+        test_code=TestCodeRecord(
+            repository="owner/miner-testcode",
+            commit_sha="abcdef0123456789abcdef0123456789abcdef01",
+            url="https://github.com/owner/miner-testcode",
+            published=True,
+        ),
     )
 
 
@@ -117,9 +130,15 @@ class LocalPublisherTest(unittest.TestCase):
             payload = json.loads((summary.artifact_root / "result.json").read_text())
 
         self.assertTrue(result.success)
+        self.assertEqual(result.url, "report.html")
         self.assertIn("tests.PublicPoolSmoke.test_mines", report)
         self.assertIn("001-device-test/test.log", report)
+        self.assertIn("tests/e2e/test_public_pool_smoke.py#L22", report)
+        self.assertIn("owner/miner-testcode@abcdef012345", report)
+        self.assertNotIn(str(summary.artifact_root), report)
+        self.assertNotIn("file://", report)
         self.assertEqual(payload["status"], "passed")
+        self.assertEqual(payload["test_code"]["repository"], "owner/miner-testcode")
 
     def test_manager_refreshes_html_with_remote_publisher_results(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -199,6 +218,10 @@ class RemotePublisherTest(unittest.TestCase):
         self.assertEqual(payload["status"], "completed")
         self.assertEqual(payload["conclusion"], "failure")
         self.assertEqual(payload["details_url"], "https://qa.example/results/1")
+        self.assertIn(
+            "tests/e2e/test_public_pool_smoke.py#L22",
+            payload["output"]["summary"],
+        )
         self.assertNotIn("installation-token", json.dumps(payload))
 
     def test_publishes_mining_qa_result_and_signed_artifacts(self) -> None:
@@ -234,6 +257,15 @@ class RemotePublisherTest(unittest.TestCase):
         self.assertTrue(result.success)
         self.assertEqual(result_payload["status"], "passed")
         self.assertEqual(result_payload["details"]["checks"][0]["passed"], True)
+        self.assertIn(
+            "tests/e2e/test_public_pool_smoke.py#L22",
+            result_payload["details"]["checks"][0]["url"],
+        )
+        self.assertEqual(
+            result_payload["details"]["test_code"]["repository"],
+            "owner/miner-testcode",
+        )
+        self.assertNotIn(str(summary.artifact_root), json.dumps(result_payload))
         self.assertEqual(len(reservations), 2)
         self.assertEqual(len(transport.uploads), 2)
         self.assertEqual(len(completions), 2)

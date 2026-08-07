@@ -4,6 +4,7 @@ import asyncio
 import logging
 import unittest
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Mapping
 
 from .artifacts import RunArtifacts, TestArtifacts
@@ -11,6 +12,7 @@ from .capabilities import missing
 from .config import DeviceConfig, ProjectConfig
 from .devices import create_device
 from .devices.base import CleanState, MiningDevice
+from .redaction import PrivacyFormatter
 
 
 @dataclass(frozen=True, slots=True)
@@ -18,6 +20,7 @@ class TestContext:
     project: ProjectConfig
     device_config: DeviceConfig
     run_artifacts: RunArtifacts
+    project_root: Path
 
 
 class MinerTestCase(unittest.IsolatedAsyncioTestCase):
@@ -40,14 +43,21 @@ class MinerTestCase(unittest.IsolatedAsyncioTestCase):
             self.fail("MinerTestCase must be run by miner-test with a device context")
         context = self._context
         self.artifacts = context.run_artifacts.for_test(
-            context.device_config.name, self.id()
+            context.device_config.publication_name, self.id()
         )
         self.logger = logging.getLogger(
-            f"miner_testcode.test.{context.device_config.name}.{self.id()}"
+            f"miner_testcode.test.{context.device_config.publication_name}.{self.id()}"
         )
         handler = logging.FileHandler(self.artifacts.path / "test.log", encoding="utf-8")
         handler.setFormatter(
-            logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+            PrivacyFormatter(
+                "%(asctime)s %(levelname)s %(name)s: %(message)s",
+                project_root=context.project_root,
+                artifact_root=context.run_artifacts.path,
+                replacements={
+                    context.device_config.name: context.device_config.publication_name
+                },
+            )
         )
         self.logger.addHandler(handler)
 

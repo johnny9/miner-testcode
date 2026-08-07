@@ -24,6 +24,9 @@ enabled = true
 name = "lab"
 type = "bitaxe_bonanza"
 
+[devices.options]
+publication_name = "Bonanza qualification device"
+
 [devices.interfaces.api]
 base_url = "${TEST_MINER_URL}"
 
@@ -37,6 +40,9 @@ host = "public-pool.io"
             config = load_config(path)
 
         self.assertEqual(config.devices[0].name, "lab")
+        self.assertEqual(
+            config.devices[0].publication_name, "Bonanza qualification device"
+        )
         self.assertEqual(
             config.devices[0].interface("api")["base_url"], "http://bitaxe.local"
         )

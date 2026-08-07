@@ -57,6 +57,8 @@ enabled = true
 [devices.options]
 # Set true for observational runs. The API transport will reject every write.
 read_only = false
+# Only this stable, non-sensitive label is included in published results.
+publication_name = "Bitaxe Bonanza 1002"
 # Required only if a test opts into changing the write-only pool password.
 # baseline_stratum_password_env = "MINER_CURRENT_POOL_PASSWORD"
 

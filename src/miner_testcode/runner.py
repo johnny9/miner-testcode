@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import inspect
 import json
 import logging
 import os
@@ -14,7 +15,8 @@ from typing import Iterator
 from .artifacts import RunArtifacts
 from .config import ConfigError, DeviceConfig, ProjectConfig, load_config
 from .publishers import PublisherManager
-from .redaction import redact_text
+from .provenance import ResolvedTestCode, resolve_test_code
+from .redaction import PrivacyFormatter, redact_text, sanitize_artifacts
 from .results import RunSummary, TestRecord
 from .testcase import MinerTestCase, TestContext
 
@@ -33,11 +35,17 @@ def _load_device_suite(
     artifacts: RunArtifacts,
     *,
     pattern: str,
+    project_root: Path,
 ) -> unittest.TestSuite:
     loader = unittest.TestLoader()
     discovered = loader.discover(str(project.runner.tests_dir), pattern=pattern)
     suite = unittest.TestSuite()
-    context = TestContext(project=project, device_config=device, run_artifacts=artifacts)
+    context = TestContext(
+        project=project,
+        device_config=device,
+        run_artifacts=artifacts,
+        project_root=project_root,
+    )
     count = 0
     for test in _iter_tests(discovered):
         module = sys.modules.get(type(test).__module__)
@@ -65,9 +73,16 @@ def _load_device_suite(
 
 
 class MiningTestResult(unittest.TextTestResult):
-    def __init__(self, *args, artifacts: RunArtifacts, **kwargs) -> None:
+    def __init__(
+        self,
+        *args,
+        artifacts: RunArtifacts,
+        test_code: ResolvedTestCode,
+        **kwargs,
+    ) -> None:
         super().__init__(*args, **kwargs)
         self.artifacts = artifacts
+        self.test_code = test_code
         self._started: dict[str, float] = {}
         self.records: list[TestRecord] = []
 
@@ -76,7 +91,11 @@ class MiningTestResult(unittest.TextTestResult):
         context = getattr(test, "_context", None)
         return {
             "test": test.id(),
-            "device": context.device_config.name if context is not None else "unknown",
+            "device": (
+                context.device_config.publication_name
+                if context is not None
+                else "unknown"
+            ),
         }
 
     def startTest(self, test: unittest.TestCase) -> None:
@@ -90,7 +109,11 @@ class MiningTestResult(unittest.TextTestResult):
 
     def _outcome(self, test: unittest.TestCase, outcome: str, detail: str | None = None) -> None:
         if detail:
-            detail = redact_text(detail)
+            detail = redact_text(
+                detail,
+                project_root=self.test_code.root,
+                artifact_root=self.artifacts.path,
+            )
         identity = self._identity(test)
         key = f"{identity['device']}::{identity['test']}"
         started = self._started.pop(key, time.monotonic())
@@ -111,6 +134,17 @@ class MiningTestResult(unittest.TextTestResult):
                 artifact_dir = test_artifacts.path.relative_to(self.artifacts.path).as_posix()
             except ValueError:
                 artifact_dir = None
+        source_path: str | None = None
+        source_line: int | None = None
+        source_url: str | None = None
+        try:
+            method = getattr(type(test), test._testMethodName)
+            source = Path(inspect.getsourcefile(method) or "").resolve()
+            source_path = source.relative_to(self.test_code.root).as_posix()
+            source_line = inspect.getsourcelines(method)[1]
+            source_url = self.test_code.file_url(source, source_line)
+        except (AttributeError, OSError, TypeError, ValueError):
+            pass
         self.records.append(
             TestRecord(
                 test_id=identity["test"],
@@ -119,6 +153,9 @@ class MiningTestResult(unittest.TextTestResult):
                 elapsed_seconds=event["elapsed_seconds"],
                 detail=detail,
                 artifact_dir=artifact_dir,
+                source_path=source_path,
+                source_line=source_line,
+                source_url=source_url,
             )
         )
 
@@ -147,13 +184,23 @@ class MiningTestResult(unittest.TextTestResult):
         super().addUnexpectedSuccess(test)
 
 
-def _configure_logging(project: ProjectConfig, artifacts: RunArtifacts) -> None:
+def _configure_logging(
+    project: ProjectConfig,
+    artifacts: RunArtifacts,
+    devices: tuple[DeviceConfig, ...],
+    project_root: Path,
+) -> None:
     level = getattr(logging, project.runner.log_level, None)
     if not isinstance(level, int):
         raise ConfigError(f"unknown runner.log_level: {project.runner.log_level}")
     root = logging.getLogger()
     root.setLevel(level)
-    formatter = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+    formatter = PrivacyFormatter(
+        "%(asctime)s %(levelname)s %(name)s: %(message)s",
+        project_root=project_root,
+        artifact_root=artifacts.path,
+        replacements={device.name: device.publication_name for device in devices},
+    )
     console = logging.StreamHandler(sys.stderr)
     console.setFormatter(formatter)
     file_handler = logging.FileHandler(artifacts.runner_log, encoding="utf-8")
@@ -193,20 +240,38 @@ def run(argv: list[str] | None = None) -> bool:
     devices = project.selected_devices(set(args.devices) if args.devices else None)
     if not devices:
         raise ConfigError("no enabled devices are configured")
+    remote_publication = any(
+        bool(project.publisher_settings(name).get("enabled", False))
+        for name in ("github", "mining_qa_status")
+    )
+    test_code = resolve_test_code(
+        project.runner.tests_dir, require_published=remote_publication
+    )
     artifacts = RunArtifacts.create(project.runner.artifacts_dir)
     started_at = time.time()
-    _configure_logging(project, artifacts)
+    _configure_logging(project, artifacts, devices, test_code.root)
     logger = logging.getLogger(__name__)
     publisher_manager = PublisherManager(project.publishers, logger=logger)
-    logger.info("run artifacts: %s", artifacts.path)
+    logger.info("run artifacts: %s", artifacts.run_id)
+
+    def relative_path(path: Path) -> str:
+        try:
+            return path.resolve().relative_to(test_code.root).as_posix()
+        except ValueError:
+            return path.name
 
     metadata = {
         "started_at": started_at,
-        "config": str(project.source),
-        "devices": [device.name for device in devices],
-        "tests_dir": str(project.runner.tests_dir),
+        "config": relative_path(project.source),
+        "devices": [device.publication_name for device in devices],
+        "tests_dir": relative_path(project.runner.tests_dir),
         "pattern": args.pattern or project.runner.pattern,
         "python": sys.version,
+        "test_code": {
+            "repository": test_code.record.repository,
+            "commit_sha": test_code.record.commit_sha,
+            "url": test_code.record.url,
+        },
     }
     (artifacts.path / "run.json").write_text(
         json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8"
@@ -216,13 +281,23 @@ def run(argv: list[str] | None = None) -> bool:
     pattern = args.pattern or project.runner.pattern
     for device in devices:
         combined.addTests(
-            _load_device_suite(project, device, artifacts, pattern=pattern)
+            _load_device_suite(
+                project,
+                device,
+                artifacts,
+                pattern=pattern,
+                project_root=test_code.root,
+            )
         )
 
     verbosity = project.runner.verbosity + args.verbose
     test_runner = unittest.TextTestRunner(
         verbosity=verbosity,
-        resultclass=partial(MiningTestResult, artifacts=artifacts),
+        resultclass=partial(
+            MiningTestResult,
+            artifacts=artifacts,
+            test_code=test_code,
+        ),
     )
     result = test_runner.run(combined)
     finished_at = time.time()
@@ -238,7 +313,10 @@ def run(argv: list[str] | None = None) -> bool:
         artifact_root=artifacts.path,
         started_at=started_at,
         finished_at=finished_at,
-        devices=tuple({"name": device.name, "type": device.type} for device in devices),
+        devices=tuple(
+            {"name": device.publication_name, "type": device.type}
+            for device in devices
+        ),
         tests=tuple(result.records),
         tests_run=result.testsRun,
         failures=len(result.failures),
@@ -247,13 +325,21 @@ def run(argv: list[str] | None = None) -> bool:
         expected_failures=len(result.expectedFailures),
         unexpected_successes=len(result.unexpectedSuccesses),
         successful=result.wasSuccessful(),
+        test_code=test_code.record,
+    )
+    for handler in logging.getLogger().handlers:
+        handler.flush()
+    sanitize_artifacts(
+        artifacts.path,
+        project_root=test_code.root,
+        replacements={device.name: device.publication_name for device in devices},
     )
     publishers_ok = publisher_manager.publish(summary)
     logger.info(
         "run complete: status=%s publishers_ok=%s artifacts=%s",
         summary.status,
         publishers_ok,
-        artifacts.path,
+        artifacts.run_id,
     )
     return result.wasSuccessful() and publishers_ok
 

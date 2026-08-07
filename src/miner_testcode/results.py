@@ -21,6 +21,9 @@ class TestRecord:
     elapsed_seconds: float
     detail: str | None = None
     artifact_dir: str | None = None
+    source_path: str | None = None
+    source_line: int | None = None
+    source_url: str | None = None
 
     @property
     def passed(self) -> bool:
@@ -34,6 +37,15 @@ class PublisherRecord:
     required: bool
     url: str | None = None
     detail: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class TestCodeRecord:
+    repository: str
+    commit_sha: str
+    url: str
+    dirty: bool = False
+    published: bool = False
 
 
 @dataclass(slots=True)
@@ -51,6 +63,7 @@ class RunSummary:
     expected_failures: int
     unexpected_successes: int
     successful: bool
+    test_code: TestCodeRecord | None = None
     publishers: list[PublisherRecord] = field(default_factory=list)
 
     @property
@@ -95,6 +108,7 @@ class RunSummary:
                 "unexpected_successes": self.unexpected_successes,
             },
             "devices": list(self.devices),
+            "test_code": asdict(self.test_code) if self.test_code else None,
             "tests": tests,
             "publishers": [asdict(record) for record in self.publishers],
         }

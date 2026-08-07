@@ -69,6 +69,15 @@ class DeviceConfig:
             return MappingProxyType({})
         return value
 
+    @property
+    def publication_name(self) -> str:
+        value = self.options.get("publication_name", self.type)
+        if not isinstance(value, str) or not value.strip():
+            raise ConfigError(
+                f"device {self.name!r} options.publication_name must be a non-empty string"
+            )
+        return value.strip()
+
 
 @dataclass(frozen=True, slots=True)
 class ProjectConfig:
