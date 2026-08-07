@@ -62,6 +62,7 @@ class PublicPoolSmokeTest(MinerTestCase):
             password=password or "x",
             tls=tls,
         )
+        self.chart("Public pool Stratum probe started")
         probe_task = asyncio.create_task(
             probe.run(timeout=float(settings.get("probe_timeout", 30.0))),
             name="public-pool-stratum-probe",
@@ -75,6 +76,7 @@ class PublicPoolSmokeTest(MinerTestCase):
         self.addAsyncCleanup(stop_probe)
 
         if configure_device:
+            self.chart("Applying public pool configuration")
             await self.device.configure_pool(
                 PoolSettings(
                     host=host,
@@ -131,6 +133,7 @@ class PublicPoolSmokeTest(MinerTestCase):
             ),
             probe_task,
         )
+        self.chart("Healthy mining and Stratum job observed")
 
         self.assertTrue(probe_result.subscribed)
         self.assertTrue(probe_result.authorized)
@@ -158,3 +161,4 @@ class PublicPoolSmokeTest(MinerTestCase):
                 description="an accepted device share",
                 after_generation=self.device.state.generation,
             )
+            self.chart("Accepted device share observed")

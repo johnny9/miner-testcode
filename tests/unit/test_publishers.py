@@ -93,6 +93,47 @@ def make_summary(root: Path, *, successful: bool = True) -> RunSummary:
                     "abcdef0123456789abcdef0123456789abcdef01/"
                     "tests/e2e/test_public_pool_smoke.py#L22"
                 ),
+                telemetry={
+                    "version": 1,
+                    "started_at": "1970-01-01T00:01:40.000Z",
+                    "duration_seconds": 4.0,
+                    "metrics": [
+                        {"key": "hashrate_ghs", "label": "Hashrate", "unit": "GH/s"},
+                        {"key": "temperature_c", "label": "Temperature", "unit": "°C"},
+                        {"key": "frequency_mhz", "label": "Frequency", "unit": "MHz"},
+                        {"key": "fan_rpm", "label": "Fan speed", "unit": "RPM"},
+                    ],
+                    "samples": [
+                        {
+                            "elapsed_seconds": 0.0,
+                            "source": "websocket",
+                            "values": {
+                                "hashrate_ghs": 1000.0,
+                                "temperature_c": 50.0,
+                                "frequency_mhz": 800.0,
+                                "fan_rpm": 3000.0,
+                            },
+                        },
+                        {
+                            "elapsed_seconds": 4.0,
+                            "source": "websocket",
+                            "values": {
+                                "hashrate_ghs": 1200.0,
+                                "temperature_c": 52.0,
+                                "frequency_mhz": 800.0,
+                                "fan_rpm": 3200.0,
+                            },
+                        },
+                    ],
+                    "markers": [
+                        {
+                            "elapsed_seconds": 2.0,
+                            "label": "Pool configured",
+                            "level": "CHART",
+                        }
+                    ],
+                    "dropped_samples": 0,
+                },
             ),
         ),
         tests_run=1,
@@ -135,6 +176,9 @@ class LocalPublisherTest(unittest.TestCase):
         self.assertIn("001-device-test/test.log", report)
         self.assertIn("tests/e2e/test_public_pool_smoke.py#L22", report)
         self.assertIn("owner/miner-testcode@abcdef012345", report)
+        self.assertIn("Mining telemetry time series", report)
+        self.assertIn("Pool configured", report)
+        self.assertIn("Hashrate", report)
         self.assertNotIn(str(summary.artifact_root), report)
         self.assertNotIn("file://", report)
         self.assertEqual(payload["status"], "passed")
@@ -264,6 +308,13 @@ class RemotePublisherTest(unittest.TestCase):
         self.assertEqual(
             result_payload["details"]["test_code"]["repository"],
             "owner/miner-testcode",
+        )
+        self.assertEqual(
+            result_payload["details"]["telemetry"][0]["markers"][0]["label"],
+            "Pool configured",
+        )
+        self.assertNotIn(
+            "telemetry", result_payload["details"]["result"]["tests"][0]
         )
         self.assertNotIn(str(summary.artifact_root), json.dumps(result_payload))
         self.assertEqual(len(reservations), 2)

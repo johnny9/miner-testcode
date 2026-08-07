@@ -17,7 +17,7 @@ from urllib.request import Request, urlopen
 from .artifacts import append_jsonl
 from .errors import ConfigError, MinerTestError
 from .redaction import redact_text
-from .results import PublisherRecord, RunSummary, iso_timestamp
+from .results import PublisherRecord, RunSummary, TestRecord, iso_timestamp
 
 _REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _SHA = re.compile(r"^[0-9a-fA-F]{7,64}$")
@@ -198,6 +198,128 @@ class LocalHtmlPublisher:
             links.append(f'<a href="{href}">{label}</a>')
         return " ".join(links) or "<span class=\"muted\">No artifacts</span>"
 
+    @staticmethod
+    def _telemetry_chart(record: TestRecord) -> str:
+        telemetry = record.telemetry
+        if not isinstance(telemetry, dict):
+            return ""
+        metrics = telemetry.get("metrics")
+        samples = telemetry.get("samples")
+        markers = telemetry.get("markers")
+        if not isinstance(metrics, list) or not isinstance(samples, list) or not samples:
+            return ""
+        safe_samples = [sample for sample in samples if isinstance(sample, dict)]
+        safe_markers = [
+            marker for marker in (markers or []) if isinstance(marker, dict)
+        ]
+        duration = max(
+            1.0,
+            float(telemetry.get("duration_seconds") or 0.0),
+            *(
+                float(sample.get("elapsed_seconds") or 0.0)
+                for sample in safe_samples
+            ),
+            *(
+                float(marker.get("elapsed_seconds") or 0.0)
+                for marker in safe_markers
+            ),
+        )
+        width = 1000.0
+        left = 90.0
+        right = 20.0
+        row_height = 105.0
+        plot_width = width - left - right
+        colors = ("#68e0d1", "#ffb454", "#b9f34a", "#c89cff")
+        rows: list[str] = []
+        rendered_metrics = 0
+        for metric in metrics:
+            if not isinstance(metric, dict):
+                continue
+            key = str(metric.get("key") or "")
+            label = str(metric.get("label") or key)
+            unit = str(metric.get("unit") or "")
+            points: list[tuple[float, float]] = []
+            for sample in safe_samples:
+                values = sample.get("values")
+                if not isinstance(values, dict):
+                    continue
+                value = values.get(key)
+                if not isinstance(value, (int, float)) or isinstance(value, bool):
+                    continue
+                points.append(
+                    (
+                        float(sample.get("elapsed_seconds") or 0.0),
+                        float(value),
+                    )
+                )
+            if not points:
+                continue
+            top = 25.0 + rendered_metrics * row_height
+            bottom = top + 70.0
+            low = min(value for _, value in points)
+            high = max(value for _, value in points)
+            if high == low:
+                padding = max(abs(high) * 0.05, 1.0)
+                low -= padding
+                high += padding
+            coordinates = [
+                (
+                    left + (elapsed / duration) * plot_width,
+                    bottom - ((value - low) / (high - low)) * (bottom - top),
+                )
+                for elapsed, value in points
+            ]
+            path = " ".join(
+                f"{'M' if index == 0 else 'L'} {x:.2f} {y:.2f}"
+                for index, (x, y) in enumerate(coordinates)
+            )
+            color = colors[rendered_metrics % len(colors)]
+            rows.append(
+                f'<g><line class="grid" x1="{left}" y1="{top:.2f}" '
+                f'x2="{width - right}" y2="{top:.2f}" />'
+                f'<line class="grid" x1="{left}" y1="{bottom:.2f}" '
+                f'x2="{width - right}" y2="{bottom:.2f}" />'
+                f'<text class="metric-label" x="8" y="{top + 16:.2f}">'
+                f'{html.escape(label)}</text>'
+                f'<text class="axis-label" x="8" y="{top + 34:.2f}">'
+                f'{high:.2f} {html.escape(unit)}</text>'
+                f'<text class="axis-label" x="8" y="{bottom:.2f}">'
+                f'{low:.2f} {html.escape(unit)}</text>'
+                f'<path d="{path}" fill="none" stroke="{color}" '
+                f'stroke-width="2.5" vector-effect="non-scaling-stroke" /></g>'
+            )
+            rendered_metrics += 1
+        if rendered_metrics == 0:
+            return ""
+
+        height = 35.0 + rendered_metrics * row_height
+        marker_lines: list[str] = []
+        marker_items: list[str] = []
+        for index, marker in enumerate(safe_markers, start=1):
+            elapsed = float(marker.get("elapsed_seconds") or 0.0)
+            x = left + min(max(elapsed / duration, 0.0), 1.0) * plot_width
+            marker_lines.append(
+                f'<line class="marker" x1="{x:.2f}" y1="10" '
+                f'x2="{x:.2f}" y2="{height - 10:.2f}" />'
+                f'<circle class="marker-dot" cx="{x:.2f}" cy="14" r="9" />'
+                f'<text class="marker-number" x="{x:.2f}" y="18">{index}</text>'
+            )
+            marker_items.append(
+                f"<li><strong>{elapsed:.3f}s</strong> "
+                f"{html.escape(str(marker.get('label') or 'Marker'))}</li>"
+            )
+        return (
+            '<section class="telemetry"><h3>'
+            f'{html.escape(record.device)} · <code>{html.escape(record.test_id)}</code>'
+            '</h3><p class="muted">'
+            f'{len(safe_samples)} samples · {duration:.3f}s · '
+            f'{int(telemetry.get("dropped_samples") or 0)} dropped</p>'
+            f'<svg class="telemetry-chart" viewBox="0 0 {width:.0f} {height:.0f}" '
+            'role="img" aria-label="Mining telemetry time series">'
+            f'{"".join(rows)}{"".join(marker_lines)}</svg>'
+            f'<ol class="marker-list">{"".join(marker_items)}</ol></section>'
+        )
+
     def _render(self, summary: RunSummary, html_path: Path) -> str:
         rows: list[str] = []
         for record in summary.tests:
@@ -232,6 +354,9 @@ class LocalHtmlPublisher:
             f"<td>{self._publisher_link(record)}</td>"
             "</tr>"
             for record in summary.publishers
+        )
+        telemetry_charts = "".join(
+            self._telemetry_chart(record) for record in summary.tests
         )
         root_links: list[str] = []
         for path in sorted(
@@ -271,6 +396,15 @@ th, td {{ border-bottom: 1px solid #8885; padding: .65rem; text-align: left; ver
 .skipped {{ background: #8a6d1d33; color: #d7ae35; }}
 a {{ margin-right: .7rem; }} code, pre {{ font-family: ui-monospace, monospace; }}
 pre {{ max-width: 75vw; overflow: auto; white-space: pre-wrap; }}
+.telemetry {{ margin: 2rem 0; padding: 1rem; border: 1px solid #8885; border-radius: .6rem; }}
+.telemetry-chart {{ width: 100%; height: auto; background: #111514; border-radius: .4rem; }}
+.grid {{ stroke: #65706955; stroke-width: 1; }}
+.metric-label {{ fill: #eef1e8; font: 600 13px system-ui, sans-serif; }}
+.axis-label {{ fill: #969d91; font: 11px ui-monospace, monospace; }}
+.marker {{ stroke: #ff6b63; stroke-width: 1.5; stroke-dasharray: 5 4; }}
+.marker-dot {{ fill: #ff6b63; }}
+.marker-number {{ fill: #111514; font: 700 10px system-ui, sans-serif; text-anchor: middle; }}
+.marker-list {{ columns: 2; padding-left: 1.5rem; }}
 </style>
 </head>
 <body>
@@ -288,6 +422,7 @@ pre {{ max-width: 75vw; overflow: auto; white-space: pre-wrap; }}
 <h2>Tests</h2>
 <table><thead><tr><th>Result</th><th>Device</th><th>Test</th><th>Time</th><th>Artifacts</th></tr></thead>
 <tbody>{''.join(rows)}</tbody></table>
+{f'<h2>Telemetry</h2>{telemetry_charts}' if telemetry_charts else ''}
 <h2>Run artifacts</h2><p>{' '.join(root_links) or '<span class="muted">None</span>'}</p>
 <h2>Publishers</h2>
 <table><thead><tr><th>Publisher</th><th>Status</th><th>Required</th><th>Details</th></tr></thead>
@@ -542,6 +677,15 @@ class MiningQaStatusPublisher:
             }
             for record in summary.tests
         ]
+        telemetry = [
+            {
+                "test_id": record.test_id,
+                "device": record.device,
+                **record.telemetry,
+            }
+            for record in summary.tests
+            if record.telemetry
+        ]
         payload: dict[str, Any] = {
             "target_type": target_type[:64],
             "target_name": target_name[:128],
@@ -568,6 +712,7 @@ class MiningQaStatusPublisher:
             "details": {
                 "passed": summary.successful,
                 "checks": checks,
+                "telemetry": telemetry,
                 "test_code": (
                     {
                         "repository": summary.test_code.repository,
@@ -580,7 +725,9 @@ class MiningQaStatusPublisher:
                     if summary.test_code
                     else None
                 ),
-                "result": summary.to_dict(detail_limit=2000),
+                "result": summary.to_dict(
+                    detail_limit=2000, include_telemetry=False
+                ),
             },
         }
         pr_number = self._pr_number()
@@ -613,6 +760,7 @@ class MiningQaStatusPublisher:
             "events.jsonl",
             "**/test.log",
             "**/device-state.jsonl",
+            "**/telemetry.jsonl",
             "**/serial.log",
             "**/device-api.log",
             "**/stratum-probe.json",

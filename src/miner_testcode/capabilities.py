@@ -9,6 +9,7 @@ OTA_UPGRADE = "ota_upgrade"
 POOL_CONFIG = "pool_config"
 SERIAL_LOG = "serial_log"
 STRATUM_V1 = "stratum_v1"
+TELEMETRY = "telemetry"
 USB_FLASH = "usb_flash"
 
 

@@ -18,6 +18,9 @@ classifiers = [
   "Programming Language :: Python :: 3",
   "Topic :: Software Development :: Testing",
 ]
+dependencies = [
+  "websockets>=14,<16",
+]
 
 [project.scripts]
 miner-test = "miner_testcode.runner:main"

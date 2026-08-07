@@ -37,3 +37,42 @@ class BonanzaStateTest(unittest.TestCase):
             {"boardVersion": "204", "ASICModel": "BM1368"}
         )
         self.assertFalse(state.identity_ok)
+
+    def test_normalizes_authoritative_bonanza_telemetry(self) -> None:
+        telemetry = BitaxeBonanzaDevice.telemetry_from_info(
+            {
+                "hashRate": 1491.8,
+                "temp": 0,
+                "actualFrequency": 1200,
+                "fanrpm": 0,
+                "asicHealth": {
+                    "boardTemperatureC": 59.97,
+                    "fixedFrequencyMHz": 1200,
+                    "fanRPM": 3360,
+                },
+            }
+        )
+
+        self.assertEqual(
+            telemetry,
+            {
+                "hashrate_ghs": 1491.8,
+                "temperature_c": 59.97,
+                "frequency_mhz": 1200.0,
+                "fan_rpm": 3360.0,
+            },
+        )
+
+    def test_merges_nested_websocket_diffs(self) -> None:
+        state = {
+            "hashRate": 1000,
+            "asicHealth": {"boardTemperatureC": 50, "fanRPM": 3000},
+        }
+        BitaxeBonanzaDevice._merge_json_diff(
+            state,
+            {"hashRate": 1200, "asicHealth": {"fanRPM": 3200}},
+        )
+
+        self.assertEqual(state["hashRate"], 1200)
+        self.assertEqual(state["asicHealth"]["boardTemperatureC"], 50)
+        self.assertEqual(state["asicHealth"]["fanRPM"], 3200)

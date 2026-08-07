@@ -39,6 +39,7 @@ TOML configuration
       -> MiningDevice abstraction
         -> Bitaxe Bonanza adapter
           -> AxeOS HTTP API (state, settings, OTA, logs)
+          -> AxeOS live WebSocket (2 Hz telemetry, REST fallback)
           -> ESP USB serial (capture, optional flash command)
       -> independent Stratum V1 probe
       -> per-test artifacts and guaranteed cleanup
@@ -57,8 +58,10 @@ that do not provide them.
 The normalized state currently includes online/identity status, lifecycle,
 hashrate, accepted/rejected shares, active/expected engines, pool address, work
 age, uptime, and a fault code. `DeviceStateStore` publishes updates through an
-`asyncio.Condition`, so tests wait on new observations without blocking the API
-or serial monitor.
+`asyncio.Condition`, so tests wait on new observations without blocking the API,
+WebSocket telemetry, or serial monitor. Every device adapter also owns a generic
+`TelemetryCapture`. The Bonanza adapter maps native data to hashrate (GH/s),
+board temperature (°C), applied frequency (MHz), and fan speed (RPM).
 
 ## Configuration
 
@@ -77,6 +80,11 @@ type = "bitaxe_bonanza"
 
 [devices.interfaces.api]
 base_url = "http://bitaxe.local"
+
+[devices.interfaces.websocket]
+enabled = true
+# url is derived as ws://bitaxe.local/api/ws/live when omitted
+required = false
 
 [devices.options]
 read_only = false
@@ -129,7 +137,7 @@ also removed from published text evidence.
 
 ## Run
 
-No third-party runtime packages are required on Linux with Python 3.11 or newer.
+Python 3.11 or newer and the declared `websockets` dependency are required.
 
 ```bash
 python3 -m venv .venv
@@ -158,8 +166,29 @@ PYTHONPATH=src python3 -m unittest discover -s tests/unit -v
 ```
 
 Each run creates one timestamped directory below `artifacts/`. Every device/test
-pair gets `test.log`, `device-state.jsonl`, `api.jsonl`, `serial.log`, a baseline,
-and the downloaded device log. Cleanup failures are test errors, never hidden.
+pair gets `test.log`, `device-state.jsonl`, `telemetry.jsonl`, `api.jsonl`,
+`serial.log`, a baseline, and the downloaded device log. Cleanup failures are
+test errors, never hidden.
+
+### Chart markers
+
+The runner registers a `CHART` log level between `INFO` and `WARNING`. A test can
+annotate an important moment with the convenience method:
+
+```python
+self.chart("Healthy mining and Stratum job observed")
+```
+
+Library-style tests can use the logging API directly with
+`logger.log(miner_testcode.CHART_LEVEL, "label")` or
+`miner_testcode.log_chart(logger, "label")`.
+
+The message remains in `test.log` and becomes a labeled vertical line in both
+the local and Mining QA Status telemetry charts. Device lifecycle, firmware
+readiness, test-body start, and clean-state restoration are marked
+automatically. Marker text is passed through the same privacy redaction as
+published logs. The full stream remains in `telemetry.jsonl`; structured result
+payloads retain at most 2,000 evenly spaced samples, including both endpoints.
 
 ## Result publishers
 
@@ -191,11 +220,12 @@ filename = "report.html"
 json_filename = "result.json"
 ```
 
-`report.html` summarizes the native unittest results and links to every log and
-artifact in each test directory. `result.json` contains the same aggregate data
-for other automation. Both are written inside the timestamped run directory.
-The report header links to the exact test-harness commit, and each test name
-links to the executed test method at that commit.
+`report.html` summarizes the native unittest results, renders telemetry as four
+aligned time-series rows with shared vertical event markers, and links to every
+log and artifact in each test directory. `result.json` contains the same
+aggregate data for other automation. Both are written inside the timestamped
+run directory. The report header links to the exact test-harness commit, and
+each test name links to the executed test method at that commit.
 
 ### GitHub Check Run
 

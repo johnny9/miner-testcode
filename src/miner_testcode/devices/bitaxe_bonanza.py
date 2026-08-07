@@ -7,6 +7,7 @@ import os
 import time
 from pathlib import Path
 from typing import Any, Callable, Mapping
+from urllib.parse import urlsplit, urlunsplit
 
 from .. import capabilities as caps
 from ..artifacts import TestArtifacts, append_jsonl
@@ -14,8 +15,10 @@ from ..config import DeviceConfig
 from ..errors import ConfigError, DeviceError, InterfaceError, UpgradeError
 from ..interfaces.api import HttpApiInterface
 from ..interfaces.serial import EspSerialInterface
+from ..interfaces.websocket import JsonWebSocketInterface
 from ..redaction import redact_file
 from ..state import DeviceState, DeviceStateStore
+from ..telemetry import STANDARD_MINING_METRICS, TelemetryCapture
 from .base import CleanState, MiningDevice, PoolSettings
 
 _RESTORABLE_POOL_FIELDS = (
@@ -48,6 +51,10 @@ class BitaxeBonanzaDevice(MiningDevice):
         self.logger = logger
         self.state = DeviceStateStore()
         self._monitor_task: asyncio.Task[None] | None = None
+        self._telemetry_task: asyncio.Task[None] | None = None
+        self._telemetry_ready = asyncio.Event()
+        self._telemetry_ws_connected = False
+        self._telemetry_cache: dict[str, Any] = {}
         self._closed = False
         self.read_only = bool(config.options.get("read_only", False))
         self._known_baseline_password: str | None = None
@@ -72,6 +79,65 @@ class BitaxeBonanzaDevice(MiningDevice):
             logger=logger,
         )
 
+        websocket_config = config.interface("websocket")
+        websocket_enabled = bool(websocket_config.get("enabled", True))
+        websocket_url = websocket_config.get("url")
+        if websocket_url is not None and not isinstance(websocket_url, str):
+            raise ConfigError(f"device {self.name!r} websocket.url must be a string")
+        if not websocket_url:
+            parsed_api_url = urlsplit(base_url)
+            websocket_url = urlunsplit(
+                (
+                    "wss" if parsed_api_url.scheme == "https" else "ws",
+                    parsed_api_url.netloc,
+                    "/api/ws/live",
+                    "",
+                    "",
+                )
+            )
+        parsed_websocket_url = urlsplit(websocket_url)
+        if (
+            parsed_websocket_url.scheme not in {"ws", "wss"}
+            or not parsed_websocket_url.netloc
+        ):
+            raise ConfigError(
+                f"device {self.name!r} websocket.url must be an absolute ws:// or wss:// URL"
+            )
+        self.telemetry_reconnect_delay = float(
+            websocket_config.get("reconnect_delay", 2.0)
+        )
+        if self.telemetry_reconnect_delay <= 0:
+            raise ConfigError("websocket.reconnect_delay must be positive")
+        self.telemetry_required = bool(websocket_config.get("required", False))
+        self.telemetry_connect_timeout = float(
+            websocket_config.get("connect_timeout", 5.0)
+        )
+        if self.telemetry_connect_timeout <= 0:
+            raise ConfigError("websocket.connect_timeout must be positive")
+        telemetry_ping_interval = float(websocket_config.get("ping_interval", 20.0))
+        if telemetry_ping_interval <= 0:
+            raise ConfigError("websocket.ping_interval must be positive")
+        telemetry_max_message_bytes = int(
+            websocket_config.get("max_message_bytes", 2 * 1024 * 1024)
+        )
+        if telemetry_max_message_bytes < 1024:
+            raise ConfigError("websocket.max_message_bytes must be at least 1024")
+        self.websocket = (
+            JsonWebSocketInterface(
+                websocket_url,
+                open_timeout=self.telemetry_connect_timeout,
+                ping_interval=telemetry_ping_interval,
+                max_message_bytes=telemetry_max_message_bytes,
+            )
+            if websocket_enabled
+            else None
+        )
+        self.telemetry = TelemetryCapture(
+            STANDARD_MINING_METRICS,
+            event_path=artifacts.telemetry_path,
+            max_samples=int(websocket_config.get("max_samples", 50_000)),
+        )
+
         serial_config = config.interface("serial")
         self.serial: EspSerialInterface | None = None
         if serial_config:
@@ -89,6 +155,7 @@ class BitaxeBonanzaDevice(MiningDevice):
             caps.OTA_UPGRADE,
             caps.POOL_CONFIG,
             caps.STRATUM_V1,
+            caps.TELEMETRY,
         }
         if self.serial is not None:
             available.add(caps.SERIAL_LOG)
@@ -139,10 +206,48 @@ class BitaxeBonanzaDevice(MiningDevice):
             raw=dict(info),
         )
 
-    async def _publish_info(self, info: Mapping[str, Any]) -> DeviceState:
+    @staticmethod
+    def telemetry_from_info(info: Mapping[str, Any]) -> dict[str, float]:
+        health = info.get("asicHealth")
+        if not isinstance(health, Mapping):
+            health = {}
+
+        def first_number(*values: Any) -> float | None:
+            for value in values:
+                if value is None or isinstance(value, bool):
+                    continue
+                try:
+                    return float(value)
+                except (TypeError, ValueError):
+                    continue
+            return None
+
+        values = {
+            "hashrate_ghs": first_number(info.get("hashRate")),
+            "temperature_c": first_number(
+                health.get("boardTemperatureC"), info.get("temp")
+            ),
+            "frequency_mhz": first_number(
+                info.get("actualFrequency"),
+                health.get("fixedFrequencyMHz"),
+                info.get("frequency"),
+            ),
+            "fan_rpm": first_number(health.get("fanRPM"), info.get("fanrpm")),
+        }
+        return {key: value for key, value in values.items() if value is not None}
+
+    async def _publish_info(
+        self, info: Mapping[str, Any], *, source: str = "api"
+    ) -> DeviceState:
         state = self.state_from_info(info)
         await self.state.update(state)
         append_jsonl(self.artifacts.state_path, state.as_event())
+        if source == "websocket" or not self._telemetry_ws_connected:
+            self.telemetry.record_sample(
+                self.telemetry_from_info(info),
+                source=source,
+                observed_at=state.observed_at,
+            )
         return state
 
     async def current_info(self) -> Mapping[str, Any]:
@@ -176,6 +281,19 @@ class BitaxeBonanzaDevice(MiningDevice):
         self._monitor_task = asyncio.create_task(
             self._monitor_loop(), name=f"{self.name}-state-monitor"
         )
+        if self.websocket is not None:
+            self._telemetry_task = asyncio.create_task(
+                self._telemetry_loop(), name=f"{self.name}-telemetry-monitor"
+            )
+            if self.telemetry_required:
+                try:
+                    await asyncio.wait_for(
+                        self._telemetry_ready.wait(), self.telemetry_connect_timeout
+                    )
+                except TimeoutError as exc:
+                    raise DeviceError(
+                        f"required WebSocket telemetry did not start for {self.name}"
+                    ) from exc
 
     async def _monitor_loop(self) -> None:
         previously_online = True
@@ -195,6 +313,52 @@ class BitaxeBonanzaDevice(MiningDevice):
                 if previously_online:
                     self.logger.warning("%s API became unavailable: %s", self.name, exc)
                 previously_online = False
+
+    @staticmethod
+    def _merge_json_diff(target: dict[str, Any], diff: Mapping[str, Any]) -> None:
+        for key, value in diff.items():
+            if isinstance(value, Mapping) and isinstance(target.get(key), dict):
+                BitaxeBonanzaDevice._merge_json_diff(target[key], value)
+            elif isinstance(value, Mapping):
+                nested: dict[str, Any] = {}
+                BitaxeBonanzaDevice._merge_json_diff(nested, value)
+                target[key] = nested
+            else:
+                target[key] = value
+
+    async def _telemetry_loop(self) -> None:
+        assert self.websocket is not None
+        logged_unavailable = False
+        while True:
+            try:
+                async for message in self.websocket.messages():
+                    data = message.get("data")
+                    if message.get("event") != "update" or not isinstance(data, Mapping):
+                        continue
+                    self._merge_json_diff(self._telemetry_cache, data)
+                    self._telemetry_ws_connected = True
+                    await self._publish_info(
+                        self._telemetry_cache, source="websocket"
+                    )
+                    if not self._telemetry_ready.is_set():
+                        self._telemetry_ready.set()
+                        self.logger.info(
+                            "WebSocket telemetry started for %s", self.name
+                        )
+                    logged_unavailable = False
+                raise InterfaceError("WebSocket telemetry stream closed")
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                self._telemetry_ws_connected = False
+                if not logged_unavailable:
+                    self.logger.warning(
+                        "WebSocket telemetry unavailable for %s; using API polling (%s)",
+                        self.name,
+                        type(exc).__name__,
+                    )
+                    logged_unavailable = True
+                await asyncio.sleep(self.telemetry_reconnect_delay)
 
     async def snapshot_clean_state(self) -> CleanState:
         info = await self.current_info()
@@ -512,12 +676,28 @@ class BitaxeBonanzaDevice(MiningDevice):
         if self._closed:
             return
         self._closed = True
-        task, self._monitor_task = self._monitor_task, None
-        if task is not None:
+        tasks = [
+            task
+            for task in (self._monitor_task, self._telemetry_task)
+            if task is not None
+        ]
+        self._monitor_task = None
+        self._telemetry_task = None
+        for task in tasks:
             task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
+        errors: list[BaseException] = []
+        if tasks:
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            errors.extend(
+                result
+                for result in results
+                if isinstance(result, BaseException)
+                and not isinstance(result, asyncio.CancelledError)
+            )
         if self.serial is not None:
-            await self.serial.stop_capture()
+            try:
+                await self.serial.stop_capture()
+            except BaseException as exc:
+                errors.append(exc)
+        if errors:
+            raise ExceptionGroup("device interface shutdown failed", errors)

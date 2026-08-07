@@ -137,6 +137,7 @@ class MiningTestResult(unittest.TextTestResult):
         source_path: str | None = None
         source_line: int | None = None
         source_url: str | None = None
+        telemetry: dict[str, object] | None = None
         try:
             method = getattr(type(test), test._testMethodName)
             source = Path(inspect.getsourcefile(method) or "").resolve()
@@ -145,6 +146,10 @@ class MiningTestResult(unittest.TextTestResult):
             source_url = self.test_code.file_url(source, source_line)
         except (AttributeError, OSError, TypeError, ValueError):
             pass
+        device = getattr(test, "device", None)
+        capture = getattr(device, "telemetry", None)
+        if capture is not None:
+            telemetry = capture.to_dict()
         self.records.append(
             TestRecord(
                 test_id=identity["test"],
@@ -156,6 +161,7 @@ class MiningTestResult(unittest.TextTestResult):
                 source_path=source_path,
                 source_line=source_line,
                 source_url=source_url,
+                telemetry=telemetry,
             )
         )
 

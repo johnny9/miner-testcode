@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from ..state import DeviceState, DeviceStateStore
+from ..telemetry import TelemetryCapture
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,6 +31,7 @@ class MiningDevice(abc.ABC):
     name: str
     capabilities: frozenset[str]
     state: DeviceStateStore
+    telemetry: TelemetryCapture
 
     @abc.abstractmethod
     async def start(self) -> None:

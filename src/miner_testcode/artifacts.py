@@ -23,6 +23,7 @@ class TestArtifacts:
     state_path: Path
     serial_path: Path
     api_trace_path: Path
+    telemetry_path: Path
 
     @classmethod
     def create(cls, path: Path) -> "TestArtifacts":
@@ -33,6 +34,7 @@ class TestArtifacts:
             state_path=path / "device-state.jsonl",
             serial_path=path / "serial.log",
             api_trace_path=path / "api.jsonl",
+            telemetry_path=path / "telemetry.jsonl",
         )
 
 

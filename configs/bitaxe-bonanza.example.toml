@@ -44,6 +44,7 @@ artifact_globs = [
   "events.jsonl",
   "**/test.log",
   "**/device-state.jsonl",
+  "**/telemetry.jsonl",
   "**/serial.log",
   "**/device-api.log",
   "**/stratum-probe.json",
@@ -70,6 +71,17 @@ retry_backoff = 0.5
 poll_interval = 2
 online_timeout = 120
 log_max_bytes = 67108864
+
+[devices.interfaces.websocket]
+# AxeOS sends a full initial state followed by JSON diffs at up to 2 Hz.
+# Omit url to derive ws(s)://HOST/api/ws/live from interfaces.api.base_url.
+enabled = true
+required = false
+connect_timeout = 5
+reconnect_delay = 2
+ping_interval = 20
+max_message_bytes = 2097152
+max_samples = 50000
 
 [devices.interfaces.serial]
 # Prefer /dev/serial/by-id over /dev/ttyACM0 so reconnects do not change identity.

@@ -24,6 +24,7 @@ class TestRecord:
     source_path: str | None = None
     source_line: int | None = None
     source_url: str | None = None
+    telemetry: dict[str, Any] | None = None
 
     @property
     def passed(self) -> bool:
@@ -84,12 +85,19 @@ class RunSummary:
             return "skipped"
         return "passed" if self.successful else "failed"
 
-    def to_dict(self, *, detail_limit: int | None = None) -> dict[str, Any]:
+    def to_dict(
+        self,
+        *,
+        detail_limit: int | None = None,
+        include_telemetry: bool = True,
+    ) -> dict[str, Any]:
         tests: list[dict[str, Any]] = []
         for record in self.tests:
             item = asdict(record)
             if detail_limit is not None and item["detail"]:
                 item["detail"] = item["detail"][:detail_limit]
+            if not include_telemetry:
+                item.pop("telemetry", None)
             tests.append(item)
         return {
             "run_id": self.run_id,
