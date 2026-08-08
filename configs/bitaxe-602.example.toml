@@ -19,7 +19,7 @@ enabled = true
 
 [devices.options]
 read_only = false
-publication_name = "Bitaxe 602"
+publication_name = "Bitaxe Gamma 602"
 
 [devices.interfaces.api]
 base_url = "http://gamma-02.local"
@@ -59,3 +59,22 @@ readiness_timeout = 120
 stable_samples = 10
 minimum_job_notifications = 1
 probe_timeout = 30
+
+[tests.stratum_v1_regression]
+# Address of this test host as seen from the miner. The server binds all local
+# interfaces below and chooses an unused port when port=0.
+advertised_host = "192.168.1.10"
+bind_host = "0.0.0.0"
+port = 0
+username = "stratum-regression.worker"
+# Explicitly opt in only on a trusted LAN/test host. The fake server drops and
+# redacts the existing write-only pool password as soon as authorize is parsed.
+allow_existing_device_password = false
+# Safer alternative: set both this and devices.options.baseline_stratum_password_env.
+# temporary_password_env = "MINER_TEST_FAKE_STRATUM_PASSWORD"
+share_difficulty = 256
+changed_difficulty = 512
+handshake_timeout = 45
+share_timeout = 45
+reconnect_timeout = 45
+accept_timeout = 20

@@ -130,3 +130,20 @@ minimum_job_notifications = 1
 probe_timeout = 30
 require_accepted_share = false
 accepted_share_timeout = 300
+
+[tests.stratum_v1_regression]
+# Use the test host's LAN address, not 127.0.0.1; the miner must be able to
+# connect to the asynchronously launched fake pool.
+advertised_host = "192.168.1.10"
+bind_host = "0.0.0.0"
+port = 0
+username = "stratum-regression.worker"
+allow_existing_device_password = false
+# Safer alternative: set both this and devices.options.baseline_stratum_password_env.
+# temporary_password_env = "MINER_TEST_FAKE_STRATUM_PASSWORD"
+share_difficulty = 256
+changed_difficulty = 512
+handshake_timeout = 45
+share_timeout = 45
+reconnect_timeout = 45
+accept_timeout = 20

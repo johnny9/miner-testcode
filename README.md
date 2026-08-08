@@ -14,7 +14,11 @@ AxeOS artifacts; it has no separate bridge firmware lifecycle.
 ## What is implemented
 
 - Generic device, capability, clean-state, pool, state, and upgrade contracts.
-- `BitaxeBonanzaDevice` identity checks for board `1002` and ASIC `BZM`.
+- `BitaxeDevice` owns the common ESP-Miner/AxeOS lifecycle, API, OTA, serial,
+  pool, telemetry, and cleanup behavior.
+- `BitaxeBonanzaDevice` extends it with board `1002` and ASIC `BZM` identity.
+- `BitaxeGammaDevice` extends it with board `602` and ASIC `BM1370` identity;
+  `Bitaxe602Device` remains a compatibility alias.
 - Concurrent API polling and serial-log capture while an async test runs.
 - Serialized, bounded API operations with safe read retries and per-request
   JSONL traces; writes are never retried automatically.
@@ -28,7 +32,11 @@ AxeOS artifacts; it has no separate bridge firmware lifecycle.
 - A publication privacy pass that redacts pool identities and removes host,
   device, configuration, and artifact absolute paths from text evidence.
 - A generic Public Pool smoke test using `unittest.IsolatedAsyncioTestCase`.
-- Bitaxe 602/BM1370 identity and standard ESP-Miner telemetry normalization.
+- A scriptable asynchronous fake Stratum V1 pool with handshake, raw framing,
+  fragmented-write, batched-message, work, submission, and reconnect controls.
+- Device regressions for valid share submission and Stratum input hardening.
+- Bitaxe Gamma 602/BM1370 identity and standard ESP-Miner telemetry
+  normalization.
 - Configurable local HTML/JSON, GitHub Check Run, and Mining QA Status result
   publishers.
 
@@ -45,6 +53,7 @@ TOML configuration
           -> AxeOS live WebSocket (2 Hz telemetry, REST fallback)
           -> ESP USB serial (capture, optional flash command)
       -> independent Stratum V1 probe
+      -> local fake Stratum V1 server for client regressions
       -> per-test artifacts and guaranteed cleanup
     -> aggregate RunSummary
       -> local HTML and JSON
@@ -109,6 +118,15 @@ host = "public-pool.io"
 port = 3333
 username_env = "MINER_TEST_POOL_USER"
 configure_device = true
+
+[tests.stratum_v1_regression]
+# LAN address of the computer running miner-test, reachable by the device.
+advertised_host = "192.168.1.10"
+bind_host = "0.0.0.0"
+port = 0
+allow_existing_device_password = false
+share_difficulty = 256
+changed_difficulty = 512
 ```
 
 An exact value such as `${MINER_TEST_POOL_PASSWORD}` is read from the environment
@@ -142,9 +160,9 @@ available for local device selection but is replaced before publication. MAC
 addresses, private IP addresses, Wi-Fi identifiers, and pool identities are
 also removed from published text evidence.
 
-For a Bitaxe 602, use `type = "bitaxe_602"`, set the API URL to the device, and
-configure OTA with only `application` and `web` artifacts. Do not configure a
-bridge artifact; board 602 does not have a separate bridge firmware.
+For a Bitaxe Gamma 602, use `type = "bitaxe_602"`, set the API URL to the
+device, and configure OTA with only `application` and `web` artifacts. Do not
+configure a bridge artifact; board 602 does not have separate bridge firmware.
 
 ## Run
 
@@ -174,6 +192,60 @@ Framework unit tests remain normal `unittest` tests and do not touch hardware:
 
 ```bash
 PYTHONPATH=src python3 -m unittest discover -s tests/unit -v
+```
+
+### Local Stratum V1 regression pool
+
+`FakeStratumV1Server` is an async context manager and can also be driven
+directly by test scripts. It automatically responds to `mining.configure`,
+`mining.subscribe`, `mining.authorize`, difficulty suggestions, extranonce
+subscriptions, and share submissions. Server-to-client traffic remains fully
+scriptable:
+
+```python
+from miner_testcode.interfaces.fake_stratum import FakeStratumV1Server, MiningJob
+
+async with FakeStratumV1Server(host="0.0.0.0") as pool:
+    handshake = await pool.wait_for_handshake(require_configure=True)
+    job = MiningJob.standard("regression-1")
+    await pool.send_job(job, difficulty=256, session=handshake.connection_id)
+    share = await pool.wait_for_submission(job_id=job.job_id, timeout=45)
+```
+
+Use `send_json()` for individual messages, `send_batch()` for multiple lines in
+one socket write, and `send_raw()` with `fragment_sizes` and `fragment_delay`
+for framing faults. `wait_for_request()`, `wait_for_handshake()`, and
+`wait_for_submission()` provide race-free synchronization. Every run saves a
+redacted `fake-stratum.jsonl`; the authorization password is never serialized.
+The parsed authorization password and raw authorization line are also discarded
+immediately rather than retained in the in-memory request transcript.
+
+The device suite is in `test_stratum_v1_regression.py`. One class-scoped setup
+starts the device and fake server and switches pools once. Separately reported,
+numbered methods then check configure, subscribe, authorize, notify/share, and
+a difficulty change followed by fresh work. They run in numeric order and stop
+executing protocol features after the first failure. Class teardown closes the
+server and restores the device once.
+
+The module retains disabled hardening cases for fragmented and consecutive
+messages, the exact 16 KiB boundary, oversized lines, embedded NULs, strict
+notify field types and widths, Merkle limits, coinbase hex and lock-time
+framing, positive difficulty, integer IDs, and safe extranonce lengths. These
+are reported as explicit skips until run against firmware expected to implement
+the corresponding parser hardening.
+
+The regression changes pool settings and restarts the device, so the configured
+adapter must not be read-only. The normal test lifecycle snapshots the original
+pool first and restores it even after a failure. The device keeps its existing
+write-only password unless a temporary password is explicitly configured. To
+reuse the existing value, set `allow_existing_device_password=true` only when
+the test host and LAN are trusted; this is intentionally an explicit opt-in.
+For a temporary password, set `temporary_password_env` and also configure
+`devices.options.baseline_stratum_password_env` so cleanup can restore the
+write-only original. Run only this module with:
+
+```bash
+miner-test --config config.local.toml --pattern 'test_stratum_v1_regression.py'
 ```
 
 Each run creates one timestamped directory below `artifacts/`. Every device/test

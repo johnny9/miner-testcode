@@ -47,6 +47,7 @@ def _load_device_suite(
         project_root=project_root,
     )
     count = 0
+    class_scoped_types: dict[type[MinerTestCase], type[MinerTestCase]] = {}
     for test in _iter_tests(discovered):
         module = sys.modules.get(type(test).__module__)
         module_file = getattr(module, "__file__", None)
@@ -62,6 +63,21 @@ def _load_device_suite(
             raise ConfigError(
                 f"end-to-end test {test.id()} must inherit MinerTestCase"
             )
+        original_type = type(test)
+        if getattr(original_type, "class_scoped_lifecycle", False):
+            bound_type = class_scoped_types.get(original_type)
+            if bound_type is None:
+                bound_type = type(
+                    original_type.__name__,
+                    (original_type,),
+                    {
+                        "__module__": original_type.__module__,
+                        "__qualname__": original_type.__qualname__,
+                        "_class_context": context,
+                    },
+                )
+                class_scoped_types[original_type] = bound_type
+            test = bound_type(test._testMethodName)
         MinerTestCase.bind_context(test, context)
         suite.addTest(test)
         count += 1

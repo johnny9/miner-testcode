@@ -2,10 +2,20 @@ from __future__ import annotations
 
 import unittest
 
-from miner_testcode.devices.bitaxe_bonanza import Bitaxe602Device, BitaxeBonanzaDevice
+from miner_testcode.devices.bitaxe import (
+    Bitaxe602Device,
+    BitaxeDevice,
+    BitaxeGammaDevice,
+)
+from miner_testcode.devices.bitaxe_bonanza import BitaxeBonanzaDevice
 
 
-class BonanzaStateTest(unittest.TestCase):
+class BitaxeStateTest(unittest.TestCase):
+    def test_model_profiles_extend_common_bitaxe_device(self) -> None:
+        self.assertTrue(issubclass(BitaxeGammaDevice, BitaxeDevice))
+        self.assertTrue(issubclass(BitaxeBonanzaDevice, BitaxeDevice))
+        self.assertIs(Bitaxe602Device, BitaxeGammaDevice)
+
     def test_normalizes_live_api_contract(self) -> None:
         state = BitaxeBonanzaDevice.state_from_info(
             {
