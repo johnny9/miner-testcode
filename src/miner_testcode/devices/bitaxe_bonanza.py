@@ -68,7 +68,7 @@ class EspMinerDevice(MiningDevice):
         base_url = api_config.get("base_url")
         if not isinstance(base_url, str) or not base_url:
             raise ConfigError(f"device {self.name!r} api.base_url is required")
-        self.poll_interval = float(api_config.get("poll_interval", 2.0))
+        self.poll_interval = float(api_config.get("poll_interval", 0.5))
         if self.poll_interval <= 0:
             raise ConfigError(f"device {self.name!r} api.poll_interval must be positive")
         self.online_timeout = float(api_config.get("online_timeout", 120.0))
@@ -340,6 +340,7 @@ class EspMinerDevice(MiningDevice):
                 await self.state.update(state)
                 append_jsonl(self.artifacts.state_path, state.as_event())
                 if previously_online:
+                    self.telemetry.record_gap(source="api", observed_at=state.observed_at)
                     self.logger.warning("%s API became unavailable: %s", self.name, exc)
                 previously_online = False
 

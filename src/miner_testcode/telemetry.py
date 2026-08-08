@@ -103,6 +103,35 @@ class TelemetryCapture:
         )
         return True
 
+    def record_gap(
+        self,
+        *,
+        source: str,
+        observed_at: float | None = None,
+    ) -> bool:
+        """Record a discontinuity without inventing zero-valued telemetry."""
+
+        sample: dict[str, object] = {
+            "at": observed_at if observed_at is not None else time.time(),
+            "source": str(source)[:32],
+            "values": {},
+            "gap": True,
+        }
+        with self._lock:
+            if self._samples and self._samples[-1].get("gap") is True:
+                return False
+            if len(self._samples) < self.max_samples:
+                self._samples.append(sample)
+            else:
+                self._samples[-1] = sample
+                self._dropped_samples += 1
+        append_jsonl(
+            self.event_path,
+            {"event": "telemetry_gap", **sample},
+            lock=self._lock,
+        )
+        return True
+
     def add_marker(
         self,
         label: str,
@@ -160,6 +189,7 @@ class TelemetryCapture:
                 "elapsed_seconds": elapsed(sample["at"]),
                 "source": sample["source"],
                 "values": sample["values"],
+                "gap": bool(sample.get("gap", False)),
             }
             for sample in samples
         ]

@@ -115,6 +115,12 @@ def make_summary(root: Path, *, successful: bool = True) -> RunSummary:
                             },
                         },
                         {
+                            "elapsed_seconds": 2.0,
+                            "source": "api",
+                            "values": {},
+                            "gap": True,
+                        },
+                        {
                             "elapsed_seconds": 4.0,
                             "source": "websocket",
                             "values": {
@@ -131,6 +137,12 @@ def make_summary(root: Path, *, successful: bool = True) -> RunSummary:
                             "label": "Pool configured",
                             "level": "CHART",
                             "status": "good",
+                        },
+                        {
+                            "elapsed_seconds": 2.01,
+                            "label": "Restore started",
+                            "level": "CHART",
+                            "status": "info",
                         }
                     ],
                     "dropped_samples": 0,
@@ -180,6 +192,7 @@ class LocalPublisherTest(unittest.TestCase):
         self.assertIn("Mining telemetry time series", report)
         self.assertIn("Pool configured", report)
         self.assertIn("marker--good", report)
+        self.assertIn('cy="36.00"', report)
         self.assertIn("Hashrate", report)
         self.assertNotIn(str(summary.artifact_root), report)
         self.assertNotIn("file://", report)

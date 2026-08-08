@@ -26,7 +26,7 @@ base_url = "http://gamma-02.local"
 timeout = 5
 retries = 2
 retry_backoff = 0.5
-poll_interval = 2
+poll_interval = 0.5
 online_timeout = 120
 
 [devices.interfaces.websocket]

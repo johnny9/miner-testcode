@@ -101,3 +101,32 @@ class TelemetryCaptureTest(unittest.TestCase):
         self.assertEqual(report["samples"][0]["values"]["hashrate_ghs"], 0.0)
         self.assertEqual(report["samples"][-1]["values"]["hashrate_ghs"], 9.0)
         self.assertEqual(report["dropped_samples"], 6)
+
+    def test_records_one_gap_for_consecutive_offline_observations(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            event_path = Path(directory) / "telemetry.jsonl"
+            capture = TelemetryCapture(
+                STANDARD_MINING_METRICS,
+                event_path=event_path,
+                started_at=100.0,
+            )
+            capture.record_sample(
+                {"hashrate_ghs": 1000}, source="api", observed_at=101.0
+            )
+            self.assertTrue(capture.record_gap(source="api", observed_at=102.0))
+            self.assertFalse(capture.record_gap(source="api", observed_at=103.0))
+            capture.record_sample(
+                {"hashrate_ghs": 1100}, source="api", observed_at=104.0
+            )
+            report = capture.to_dict()
+            events = [json.loads(line) for line in event_path.read_text().splitlines()]
+
+        self.assertEqual(len(report["samples"]), 3)
+        self.assertFalse(report["samples"][0]["gap"])
+        self.assertTrue(report["samples"][1]["gap"])
+        self.assertEqual(report["samples"][1]["values"], {})
+        self.assertFalse(report["samples"][2]["gap"])
+        self.assertEqual(
+            [event["event"] for event in events],
+            ["telemetry_sample", "telemetry_gap", "telemetry_sample"],
+        )

@@ -212,6 +212,7 @@ class LocalHtmlPublisher:
         safe_markers = [
             marker for marker in (markers or []) if isinstance(marker, dict)
         ]
+        gap_count = sum(sample.get("gap") is True for sample in safe_samples)
         duration = max(
             1.0,
             float(telemetry.get("duration_seconds") or 0.0),
@@ -230,6 +231,25 @@ class LocalHtmlPublisher:
         row_height = 105.0
         plot_width = width - left - right
         colors = ("#68e0d1", "#ffb454", "#b9f34a", "#c89cff")
+        marker_lane_ends: list[float] = []
+        positioned_markers: list[tuple[dict[str, Any], float, int]] = []
+        for marker in safe_markers:
+            elapsed = float(marker.get("elapsed_seconds") or 0.0)
+            marker_x = left + min(max(elapsed / duration, 0.0), 1.0) * plot_width
+            lane = next(
+                (
+                    index
+                    for index, last_x in enumerate(marker_lane_ends)
+                    if marker_x - last_x >= 22.0
+                ),
+                len(marker_lane_ends),
+            )
+            if lane == len(marker_lane_ends):
+                marker_lane_ends.append(marker_x)
+            else:
+                marker_lane_ends[lane] = marker_x
+            positioned_markers.append((marker, marker_x, lane))
+        chart_top = 25.0 + max(0, len(marker_lane_ends) - 1) * 22.0
         rows: list[str] = []
         rendered_metrics = 0
         for metric in metrics:
@@ -238,23 +258,32 @@ class LocalHtmlPublisher:
             key = str(metric.get("key") or "")
             label = str(metric.get("label") or key)
             unit = str(metric.get("unit") or "")
-            points: list[tuple[float, float]] = []
+            segments: list[list[tuple[float, float]]] = []
+            segment: list[tuple[float, float]] = []
             for sample in safe_samples:
+                if sample.get("gap") is True:
+                    if segment:
+                        segments.append(segment)
+                        segment = []
+                    continue
                 values = sample.get("values")
                 if not isinstance(values, dict):
                     continue
                 value = values.get(key)
                 if not isinstance(value, (int, float)) or isinstance(value, bool):
                     continue
-                points.append(
+                segment.append(
                     (
                         float(sample.get("elapsed_seconds") or 0.0),
                         float(value),
                     )
                 )
+            if segment:
+                segments.append(segment)
+            points = [point for current in segments for point in current]
             if not points:
                 continue
-            top = 25.0 + rendered_metrics * row_height
+            top = chart_top + rendered_metrics * row_height
             bottom = top + 70.0
             low = min(value for _, value in points)
             high = max(value for _, value in points)
@@ -262,18 +291,24 @@ class LocalHtmlPublisher:
                 padding = max(abs(high) * 0.05, 1.0)
                 low -= padding
                 high += padding
-            coordinates = [
-                (
-                    left + (elapsed / duration) * plot_width,
-                    bottom - ((value - low) / (high - low)) * (bottom - top),
-                )
-                for elapsed, value in points
-            ]
-            path = " ".join(
-                f"{'M' if index == 0 else 'L'} {x:.2f} {y:.2f}"
-                for index, (x, y) in enumerate(coordinates)
-            )
             color = colors[rendered_metrics % len(colors)]
+            paths: list[str] = []
+            for current in segments:
+                coordinates = [
+                    (
+                        left + (elapsed / duration) * plot_width,
+                        bottom - ((value - low) / (high - low)) * (bottom - top),
+                    )
+                    for elapsed, value in current
+                ]
+                path = " ".join(
+                    f"{'M' if index == 0 else 'L'} {x:.2f} {y:.2f}"
+                    for index, (x, y) in enumerate(coordinates)
+                )
+                paths.append(
+                    f'<path d="{path}" fill="none" stroke="{color}" '
+                    'stroke-width="2.5" vector-effect="non-scaling-stroke" />'
+                )
             rows.append(
                 f'<g><line class="grid" x1="{left}" y1="{top:.2f}" '
                 f'x2="{width - right}" y2="{top:.2f}" />'
@@ -285,27 +320,28 @@ class LocalHtmlPublisher:
                 f'{high:.2f} {html.escape(unit)}</text>'
                 f'<text class="axis-label" x="8" y="{bottom:.2f}">'
                 f'{low:.2f} {html.escape(unit)}</text>'
-                f'<path d="{path}" fill="none" stroke="{color}" '
-                f'stroke-width="2.5" vector-effect="non-scaling-stroke" /></g>'
+                f'{"".join(paths)}</g>'
             )
             rendered_metrics += 1
         if rendered_metrics == 0:
             return ""
 
-        height = 35.0 + rendered_metrics * row_height
+        height = chart_top + 10.0 + rendered_metrics * row_height
         marker_lines: list[str] = []
         marker_items: list[str] = []
-        for index, marker in enumerate(safe_markers, start=1):
+        for index, (marker, x, lane) in enumerate(positioned_markers, start=1):
             elapsed = float(marker.get("elapsed_seconds") or 0.0)
-            x = left + min(max(elapsed / duration, 0.0), 1.0) * plot_width
+            marker_y = 14.0 + lane * 22.0
             status = str(marker.get("status") or "info")
             if status not in {"info", "good", "bad"}:
                 status = "info"
             marker_lines.append(
-                f'<line class="marker marker--{status}" x1="{x:.2f}" y1="10" '
+                f'<line class="marker marker--{status}" x1="{x:.2f}" y1="{marker_y:.2f}" '
                 f'x2="{x:.2f}" y2="{height - 10:.2f}" />'
-                f'<circle class="marker-dot marker--{status}" cx="{x:.2f}" cy="14" r="9" />'
-                f'<text class="marker-number" x="{x:.2f}" y="18">{index}</text>'
+                f'<circle class="marker-dot marker--{status}" cx="{x:.2f}" '
+                f'cy="{marker_y:.2f}" r="9" />'
+                f'<text class="marker-number" x="{x:.2f}" '
+                f'y="{marker_y + 4:.2f}">{index}</text>'
             )
             marker_items.append(
                 f'<li class="marker-item--{status}"><strong>{elapsed:.3f}s</strong> '
@@ -315,7 +351,8 @@ class LocalHtmlPublisher:
             '<section class="telemetry"><h3>'
             f'{html.escape(record.device)} · <code>{html.escape(record.test_id)}</code>'
             '</h3><p class="muted">'
-            f'{len(safe_samples)} samples · {duration:.3f}s · '
+            f'{len(safe_samples) - gap_count} samples · {duration:.3f}s · '
+            f'{gap_count} offline gaps · '
             f'{int(telemetry.get("dropped_samples") or 0)} dropped</p>'
             f'<svg class="telemetry-chart" viewBox="0 0 {width:.0f} {height:.0f}" '
             'role="img" aria-label="Mining telemetry time series">'

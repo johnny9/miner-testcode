@@ -201,7 +201,10 @@ becomes a labeled vertical line in both
 the local and Mining QA Status telemetry charts. Device lifecycle, firmware
 readiness, test-body start, and clean-state restoration are marked
 automatically. Marker text is passed through the same privacy redaction as
-published logs. The full stream remains in `telemetry.jsonl`; structured result
+published logs. REST fallback polling defaults to 0.5 seconds (2 Hz) for
+smoother charts. Offline transitions are stored as explicit gaps without metric
+values, so charts do not invent zero readings or connect lines across an
+outage. The full stream remains in `telemetry.jsonl`; structured result
 payloads retain at most 2,000 evenly spaced samples, including both endpoints.
 
 ## Result publishers
