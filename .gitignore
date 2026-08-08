@@ -10,4 +10,5 @@ dist/
 
 # Local hardware coordinates and run output do not belong in source control.
 config.local.toml
+config.*.local.toml
 artifacts/

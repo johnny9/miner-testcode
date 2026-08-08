@@ -33,8 +33,12 @@ _RESTORABLE_POOL_FIELDS = (
 )
 
 
-class BitaxeBonanzaDevice(MiningDevice):
-    """ESP-Miner/AxeOS adapter for board 1002 Bitaxe Bonanza devices."""
+class EspMinerDevice(MiningDevice):
+    """Shared ESP-Miner/AxeOS adapter with model-specific identity profiles."""
+
+    device_label = "ESP-Miner device"
+    board_prefix = ""
+    asic_model = ""
 
     def __init__(
         self,
@@ -163,23 +167,48 @@ class BitaxeBonanzaDevice(MiningDevice):
                 available.add(caps.USB_FLASH)
         self.capabilities = frozenset(available)
 
-    @staticmethod
-    def state_from_info(info: Mapping[str, Any]) -> DeviceState:
+    @classmethod
+    def identity_matches(cls, info: Mapping[str, Any]) -> bool:
+        board = str(info.get("boardVersion", ""))
+        asic = str(info.get("ASICModel", ""))
+        return board.startswith(cls.board_prefix) and asic == cls.asic_model
+
+    @classmethod
+    def state_from_info(cls, info: Mapping[str, Any]) -> DeviceState:
         health = info.get("asicHealth")
         if not isinstance(health, dict):
             health = {}
-        board = str(info.get("boardVersion", ""))
-        asic = str(info.get("ASICModel", ""))
-        identity_ok = board.startswith("1002") and asic == "BZM"
         lifecycle = health.get("lifecycle")
-        if lifecycle is None:
-            lifecycle = "PAUSED" if info.get("miningPaused") else None
+        hashrate_ghs = float(info.get("hashRate") or 0.0)
+        fault_code = int(health.get("lastFaultCode") or 0)
+        system_fault = bool(
+            info.get("hardware_fault")
+            or info.get("power_fault")
+            or info.get("overheat_mode")
+        )
+        if fault_code == 0 and system_fault:
+            fault_code = 1
+        lifecycle_name = str(lifecycle).upper() if lifecycle is not None else None
+        lifecycle_blocks_mining = lifecycle_name in {
+            "FAULT",
+            "MAINTENANCE",
+            "PAUSED",
+            "SAFE_OFF",
+            "STOPPED",
+        }
+        mining_active = bool(
+            hashrate_ghs > 0.0
+            and not info.get("miningPaused")
+            and fault_code == 0
+            and not lifecycle_blocks_mining
+        )
         return DeviceState(
             observed_at=time.time(),
             online=True,
-            identity_ok=identity_ok,
+            identity_ok=cls.identity_matches(info),
             lifecycle=str(lifecycle) if lifecycle is not None else None,
-            hashrate_ghs=float(info.get("hashRate") or 0.0),
+            mining_active=mining_active,
+            hashrate_ghs=hashrate_ghs,
             shares_accepted=int(info.get("sharesAccepted") or 0),
             shares_rejected=int(info.get("sharesRejected") or 0),
             active_engines=(
@@ -202,7 +231,7 @@ class BitaxeBonanzaDevice(MiningDevice):
             uptime_seconds=(
                 int(info["uptimeSeconds"]) if info.get("uptimeSeconds") is not None else None
             ),
-            fault_code=int(health.get("lastFaultCode") or 0),
+            fault_code=fault_code,
             raw=dict(info),
         )
 
@@ -260,7 +289,7 @@ class BitaxeBonanzaDevice(MiningDevice):
         state = self.state.latest
         if not state.identity_ok:
             raise DeviceError(
-                f"{self.name} is not a Bitaxe Bonanza: "
+                f"{self.name} is not a {self.device_label}: "
                 f"board={info.get('boardVersion')!r}, ASIC={info.get('ASICModel')!r}"
             )
         self.logger.info(
@@ -318,10 +347,10 @@ class BitaxeBonanzaDevice(MiningDevice):
     def _merge_json_diff(target: dict[str, Any], diff: Mapping[str, Any]) -> None:
         for key, value in diff.items():
             if isinstance(value, Mapping) and isinstance(target.get(key), dict):
-                BitaxeBonanzaDevice._merge_json_diff(target[key], value)
+                EspMinerDevice._merge_json_diff(target[key], value)
             elif isinstance(value, Mapping):
                 nested: dict[str, Any] = {}
-                BitaxeBonanzaDevice._merge_json_diff(nested, value)
+                EspMinerDevice._merge_json_diff(nested, value)
                 target[key] = nested
             else:
                 target[key] = value
@@ -701,3 +730,19 @@ class BitaxeBonanzaDevice(MiningDevice):
                 errors.append(exc)
         if errors:
             raise ExceptionGroup("device interface shutdown failed", errors)
+
+
+class BitaxeBonanzaDevice(EspMinerDevice):
+    """ESP-Miner/AxeOS profile for board 1002 Bitaxe Bonanza devices."""
+
+    device_label = "Bitaxe Bonanza"
+    board_prefix = "1002"
+    asic_model = "BZM"
+
+
+class Bitaxe602Device(EspMinerDevice):
+    """ESP-Miner/AxeOS profile for board 602 Bitaxe Gamma devices."""
+
+    device_label = "Bitaxe 602"
+    board_prefix = "602"
+    asic_model = "BM1370"

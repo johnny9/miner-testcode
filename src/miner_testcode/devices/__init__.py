@@ -7,9 +7,10 @@ from ..artifacts import TestArtifacts
 from ..config import DeviceConfig
 from ..errors import ConfigError
 from .base import MiningDevice
-from .bitaxe_bonanza import BitaxeBonanzaDevice
+from .bitaxe_bonanza import Bitaxe602Device, BitaxeBonanzaDevice
 
 _DEVICE_TYPES: dict[str, type[MiningDevice]] = {
+    "bitaxe_602": Bitaxe602Device,
     "bitaxe_bonanza": BitaxeBonanzaDevice,
 }
 
@@ -36,4 +37,4 @@ def create_device(
     )
 
 
-__all__ = ["BitaxeBonanzaDevice", "MiningDevice", "create_device"]
+__all__ = ["Bitaxe602Device", "BitaxeBonanzaDevice", "MiningDevice", "create_device"]

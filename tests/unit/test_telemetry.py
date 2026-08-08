@@ -33,7 +33,9 @@ class TelemetryCaptureTest(unittest.TestCase):
                 source="websocket",
                 observed_at=101.25,
             )
-            capture.add_marker("  Pool   configured  ", observed_at=101.5)
+            capture.add_marker(
+                "  Pool   configured  ", observed_at=101.5, status="good"
+            )
             report = capture.to_dict()
             events = [json.loads(line) for line in event_path.read_text().splitlines()]
 
@@ -45,6 +47,7 @@ class TelemetryCaptureTest(unittest.TestCase):
         )
         self.assertEqual(report["markers"][0]["label"], "Pool configured")
         self.assertEqual(report["markers"][0]["elapsed_seconds"], 1.5)
+        self.assertEqual(report["markers"][0]["status"], "good")
         self.assertEqual([event["event"] for event in events], [
             "telemetry_sample",
             "chart_marker",
@@ -66,11 +69,18 @@ class TelemetryCaptureTest(unittest.TestCase):
             logger.setLevel(logging.DEBUG)
             logger.info("ordinary log")
             logger.log(CHART_LEVEL, "private moment")
+            logger.log(
+                CHART_LEVEL,
+                "private success",
+                extra={"chart_status": "good"},
+            )
             report = capture.to_dict()
 
-        self.assertEqual(len(report["markers"]), 1)
+        self.assertEqual(len(report["markers"]), 2)
         self.assertEqual(report["markers"][0]["label"], "public moment")
         self.assertEqual(report["markers"][0]["level"], "CHART")
+        self.assertEqual(report["markers"][0]["status"], "info")
+        self.assertEqual(report["markers"][1]["status"], "good")
 
     def test_downsamples_published_series_but_preserves_endpoints(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

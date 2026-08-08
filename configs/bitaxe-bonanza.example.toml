@@ -126,6 +126,7 @@ min_hashrate_ghs = 100
 max_work_age_seconds = 60
 readiness_timeout = 120
 stable_samples = 3
+minimum_job_notifications = 1
 probe_timeout = 30
 require_accepted_share = false
 accepted_share_timeout = 300

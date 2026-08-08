@@ -12,6 +12,7 @@ class DeviceState:
     online: bool
     identity_ok: bool = False
     lifecycle: str | None = None
+    mining_active: bool = False
     hashrate_ghs: float = 0.0
     shares_accepted: int = 0
     shares_rejected: int = 0

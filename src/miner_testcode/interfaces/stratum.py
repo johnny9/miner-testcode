@@ -16,6 +16,7 @@ class StratumProbeResult:
     subscribed: bool
     authorized: bool
     job_received: bool
+    job_notifications_received: int
     difficulty: float | None
     messages_received: int
     elapsed_seconds: float
@@ -41,7 +42,14 @@ class StratumV1Probe:
         self.tls = tls
         self.user_agent = user_agent
 
-    async def run(self, *, timeout: float = 20.0) -> StratumProbeResult:
+    async def run(
+        self,
+        *,
+        timeout: float = 20.0,
+        minimum_job_notifications: int = 1,
+    ) -> StratumProbeResult:
+        if minimum_job_notifications < 1:
+            raise ValueError("minimum_job_notifications must be positive")
         started = time.monotonic()
         ssl_context = ssl.create_default_context() if self.tls else None
         try:
@@ -71,9 +79,14 @@ class StratumV1Probe:
                     subscribed = False
                     authorized = False
                     job_received = False
+                    job_notifications = 0
                     difficulty: float | None = None
                     messages = 0
-                    while not (subscribed and authorized and job_received):
+                    while not (
+                        subscribed
+                        and authorized
+                        and job_notifications >= minimum_job_notifications
+                    ):
                         line = await reader.readline()
                         if not line:
                             raise InterfaceError(
@@ -105,6 +118,7 @@ class StratumV1Probe:
                         method = message.get("method")
                         params = message.get("params")
                         if method == "mining.notify" and isinstance(params, list):
+                            job_notifications += 1
                             job_received = True
                         elif method == "mining.set_difficulty" and isinstance(params, list) and params:
                             try:
@@ -128,6 +142,7 @@ class StratumV1Probe:
             subscribed=subscribed,
             authorized=authorized,
             job_received=job_received,
+            job_notifications_received=job_notifications,
             difficulty=difficulty,
             messages_received=messages,
             elapsed_seconds=time.monotonic() - started,

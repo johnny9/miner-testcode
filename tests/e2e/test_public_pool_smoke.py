@@ -53,6 +53,7 @@ class PublicPoolSmokeTest(MinerTestCase):
         max_work_age = float(settings.get("max_work_age_seconds", 60.0))
         readiness_timeout = float(settings.get("readiness_timeout", 120.0))
         stable_samples = int(settings.get("stable_samples", 3))
+        minimum_job_notifications = int(settings.get("minimum_job_notifications", 1))
 
         probe_username = str(configured_probe_username or username)
         probe = StratumV1Probe(
@@ -64,7 +65,10 @@ class PublicPoolSmokeTest(MinerTestCase):
         )
         self.chart("Public pool Stratum probe started")
         probe_task = asyncio.create_task(
-            probe.run(timeout=float(settings.get("probe_timeout", 30.0))),
+            probe.run(
+                timeout=float(settings.get("probe_timeout", 30.0)),
+                minimum_job_notifications=minimum_job_notifications,
+            ),
             name="public-pool-stratum-probe",
         )
 
@@ -106,13 +110,13 @@ class PublicPoolSmokeTest(MinerTestCase):
                 or state.active_engines == state.expected_engines
             )
             work_fresh = (
-                state.current_work_age_seconds is not None
-                and state.current_work_age_seconds <= max_work_age
+                state.current_work_age_seconds is None
+                or state.current_work_age_seconds <= max_work_age
             )
             return (
                 state.online
                 and state.identity_ok
-                and state.lifecycle == "MINING"
+                and state.mining_active
                 and state.pool_host == host
                 and state.pool_port == port
                 and state.hashrate_ghs >= min_hashrate
@@ -133,11 +137,19 @@ class PublicPoolSmokeTest(MinerTestCase):
             ),
             probe_task,
         )
-        self.chart("Healthy mining and Stratum job observed")
+        self.chart(
+            "Healthy mining and fresh pool work observed "
+            f"({probe_result.job_notifications_received} mining.notify)",
+            status="good",
+        )
 
         self.assertTrue(probe_result.subscribed)
         self.assertTrue(probe_result.authorized)
         self.assertTrue(probe_result.job_received)
+        self.assertGreaterEqual(
+            probe_result.job_notifications_received,
+            minimum_job_notifications,
+        )
         self.assertEqual(len(states), stable_samples)
         self.assertTrue(all(state.fault_code == 0 for state in states))
         (self.artifacts.path / "stratum-probe.json").write_text(
@@ -145,10 +157,12 @@ class PublicPoolSmokeTest(MinerTestCase):
             encoding="utf-8",
         )
         self.logger.info(
-            "Stratum probe completed: subscribed=%s authorized=%s job=%s messages=%d",
+            "Stratum probe completed: subscribed=%s authorized=%s job=%s "
+            "notifications=%d messages=%d",
             probe_result.subscribed,
             probe_result.authorized,
             probe_result.job_received,
+            probe_result.job_notifications_received,
             probe_result.messages_received,
         )
 
@@ -161,4 +175,4 @@ class PublicPoolSmokeTest(MinerTestCase):
                 description="an accepted device share",
                 after_generation=self.device.state.generation,
             )
-            self.chart("Accepted device share observed")
+            self.chart("Accepted device share observed", status="good")

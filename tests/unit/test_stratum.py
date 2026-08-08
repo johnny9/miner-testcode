@@ -10,10 +10,11 @@ from miner_testcode.interfaces.stratum import StratumV1Probe
 class StratumProbeTest(unittest.IsolatedAsyncioTestCase):
     async def test_subscribes_authorizes_and_receives_job(self) -> None:
         messages = [
-                {"id": 1, "result": [[[]], "aa", 4], "error": None},
-                {"id": 2, "result": True, "error": None},
-                {"id": None, "method": "mining.set_difficulty", "params": [1024]},
-                {"id": None, "method": "mining.notify", "params": ["job"]},
+            {"id": 1, "result": [[[]], "aa", 4], "error": None},
+            {"id": 2, "result": True, "error": None},
+            {"id": None, "method": "mining.set_difficulty", "params": [1024]},
+            {"id": None, "method": "mining.notify", "params": ["job"]},
+            {"id": None, "method": "mining.notify", "params": ["next-job"]},
         ]
 
         class FakeReader:
@@ -47,7 +48,7 @@ class StratumProbeTest(unittest.IsolatedAsyncioTestCase):
         ):
             result = await StratumV1Probe(
                 "pool.example", 3333, "bc1test.worker"
-            ).run(timeout=1)
+            ).run(timeout=1, minimum_job_notifications=2)
 
         subscribe = json.loads(writer.writes[0])
         authorize = json.loads(writer.writes[1])
@@ -56,4 +57,5 @@ class StratumProbeTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result.subscribed)
         self.assertTrue(result.authorized)
         self.assertTrue(result.job_received)
+        self.assertEqual(result.job_notifications_received, 2)
         self.assertEqual(result.difficulty, 1024)

@@ -5,9 +5,11 @@ against real Bitcoin mining devices. Tests describe capabilities and normalized
 state instead of a particular ASIC or firmware API. Device adapters own the
 hardware-specific behavior.
 
-The first adapter targets the Bitaxe Bonanza running ESP-Miner/AxeOS. The first
-test independently handshakes with Public Pool's Stratum V1 server while the
-device is monitored over HTTP and its ESP USB serial log is captured.
+The ESP-Miner adapter targets both the board 1002 Bitaxe Bonanza and board 602
+Bitaxe Gamma. The first test independently handshakes with Public Pool's
+Stratum V1 server while the device is monitored over HTTP and its ESP USB
+serial log is captured. The 602 profile uses only the ESP-Miner application and
+AxeOS artifacts; it has no separate bridge firmware lifecycle.
 
 ## What is implemented
 
@@ -26,6 +28,7 @@ device is monitored over HTTP and its ESP USB serial log is captured.
 - A publication privacy pass that redacts pool identities and removes host,
   device, configuration, and artifact absolute paths from text evidence.
 - A generic Public Pool smoke test using `unittest.IsolatedAsyncioTestCase`.
+- Bitaxe 602/BM1370 identity and standard ESP-Miner telemetry normalization.
 - Configurable local HTML/JSON, GitHub Check Run, and Mining QA Status result
   publishers.
 
@@ -55,9 +58,13 @@ mutable settings that tests may touch, and restores them even after an assertion
 or setup error. A test declares `required_capabilities`; it is skipped on devices
 that do not provide them.
 
-The normalized state currently includes online/identity status, lifecycle,
-hashrate, accepted/rejected shares, active/expected engines, pool address, work
-age, uptime, and a fault code. `DeviceStateStore` publishes updates through an
+The normalized state currently includes online/identity status, the native
+lifecycle when one is exposed, a portable `mining_active` signal, hashrate,
+accepted/rejected shares, active/expected engines, pool address, work age,
+uptime, and a fault code. `mining_active` requires positive observed hashrate
+and rejects paused, faulted, overheated, maintenance, and safe-off states, so
+tests do not depend on a device-specific lifecycle label. `DeviceStateStore`
+publishes updates through an
 `asyncio.Condition`, so tests wait on new observations without blocking the API,
 WebSocket telemetry, or serial monitor. Every device adapter also owns a generic
 `TelemetryCapture`. The Bonanza adapter maps native data to hashrate (GH/s),
@@ -135,6 +142,10 @@ available for local device selection but is replaced before publication. MAC
 addresses, private IP addresses, Wi-Fi identifiers, and pool identities are
 also removed from published text evidence.
 
+For a Bitaxe 602, use `type = "bitaxe_602"`, set the API URL to the device, and
+configure OTA with only `application` and `web` artifacts. Do not configure a
+bridge artifact; board 602 does not have a separate bridge firmware.
+
 ## Run
 
 Python 3.11 or newer and the declared `websockets` dependency are required.
@@ -176,14 +187,17 @@ The runner registers a `CHART` log level between `INFO` and `WARNING`. A test ca
 annotate an important moment with the convenience method:
 
 ```python
-self.chart("Healthy mining and Stratum job observed")
+self.chart("Healthy mining and fresh pool work observed", status="good")
 ```
 
 Library-style tests can use the logging API directly with
 `logger.log(miner_testcode.CHART_LEVEL, "label")` or
 `miner_testcode.log_chart(logger, "label")`.
 
-The message remains in `test.log` and becomes a labeled vertical line in both
+Use `status="good"` for successful milestones and `status="bad"` for failures;
+informational markers are the default. The test runner also appends a green or
+red final outcome marker automatically. The message remains in `test.log` and
+becomes a labeled vertical line in both
 the local and Mining QA Status telemetry charts. Device lifecycle, firmware
 readiness, test-body start, and clean-state restoration are marked
 automatically. Marker text is passed through the same privacy redaction as

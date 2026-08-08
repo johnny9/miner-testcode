@@ -13,7 +13,7 @@ from .config import DeviceConfig, ProjectConfig
 from .devices import create_device
 from .devices.base import CleanState, MiningDevice
 from .redaction import PrivacyFormatter, redact_text
-from .telemetry import CHART_LEVEL, ChartMarkerHandler, log_chart
+from .telemetry import ChartMarkerHandler, log_chart
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,13 +100,13 @@ class MinerTestCase(unittest.IsolatedAsyncioTestCase):
 
         self._baseline: CleanState | None = None
         self.addAsyncCleanup(self._cleanup_device)
-        self.logger.log(CHART_LEVEL, "Device lifecycle started")
+        self.chart("Device lifecycle started")
         await self.device.start()
         await self.device.ensure_target_firmware()
-        self.logger.log(CHART_LEVEL, "Target firmware ready")
+        self.chart("Target firmware ready", status="good")
         self._baseline = await self.device.snapshot_clean_state()
         self.baseline = self._baseline
-        self.logger.log(CHART_LEVEL, "Test body started")
+        self.chart("Test body started")
 
     async def _cleanup_device(self) -> None:
         errors: list[BaseException] = []
@@ -114,11 +114,11 @@ class MinerTestCase(unittest.IsolatedAsyncioTestCase):
         timeout = context.project.runner.cleanup_timeout if context else 120.0
         try:
             if self._baseline is not None:
-                self.logger.log(CHART_LEVEL, "Clean-state restore started")
+                self.chart("Clean-state restore started")
                 await asyncio.wait_for(
                     self.device.restore_clean_state(self._baseline), timeout=timeout
                 )
-                self.logger.log(CHART_LEVEL, "Clean state restored")
+                self.chart("Clean state restored", status="good")
         except BaseException as exc:
             errors.append(exc)
             self.logger.exception("device clean-state restoration failed")
@@ -129,7 +129,7 @@ class MinerTestCase(unittest.IsolatedAsyncioTestCase):
             self.logger.exception("device log collection failed")
         try:
             await self.device.close()
-            self.logger.log(CHART_LEVEL, "Device lifecycle finished")
+            self.chart("Device lifecycle finished", status="good")
         except BaseException as exc:
             errors.append(exc)
             self.logger.exception("device interface shutdown failed")
@@ -145,7 +145,7 @@ class MinerTestCase(unittest.IsolatedAsyncioTestCase):
         assert self._context is not None
         return self._context.project.test_settings(name)
 
-    def chart(self, message: str, *args, **kwargs) -> None:
+    def chart(self, message: str, *args, status: str = "info", **kwargs) -> None:
         """Log a CHART-level event rendered as a vertical telemetry marker."""
 
-        log_chart(self.logger, message, *args, **kwargs)
+        log_chart(self.logger, message, *args, status=status, **kwargs)

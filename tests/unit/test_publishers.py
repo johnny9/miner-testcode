@@ -130,6 +130,7 @@ def make_summary(root: Path, *, successful: bool = True) -> RunSummary:
                             "elapsed_seconds": 2.0,
                             "label": "Pool configured",
                             "level": "CHART",
+                            "status": "good",
                         }
                     ],
                     "dropped_samples": 0,
@@ -178,6 +179,7 @@ class LocalPublisherTest(unittest.TestCase):
         self.assertIn("owner/miner-testcode@abcdef012345", report)
         self.assertIn("Mining telemetry time series", report)
         self.assertIn("Pool configured", report)
+        self.assertIn("marker--good", report)
         self.assertIn("Hashrate", report)
         self.assertNotIn(str(summary.artifact_root), report)
         self.assertNotIn("file://", report)

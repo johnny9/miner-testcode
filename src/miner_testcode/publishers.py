@@ -298,14 +298,17 @@ class LocalHtmlPublisher:
         for index, marker in enumerate(safe_markers, start=1):
             elapsed = float(marker.get("elapsed_seconds") or 0.0)
             x = left + min(max(elapsed / duration, 0.0), 1.0) * plot_width
+            status = str(marker.get("status") or "info")
+            if status not in {"info", "good", "bad"}:
+                status = "info"
             marker_lines.append(
-                f'<line class="marker" x1="{x:.2f}" y1="10" '
+                f'<line class="marker marker--{status}" x1="{x:.2f}" y1="10" '
                 f'x2="{x:.2f}" y2="{height - 10:.2f}" />'
-                f'<circle class="marker-dot" cx="{x:.2f}" cy="14" r="9" />'
+                f'<circle class="marker-dot marker--{status}" cx="{x:.2f}" cy="14" r="9" />'
                 f'<text class="marker-number" x="{x:.2f}" y="18">{index}</text>'
             )
             marker_items.append(
-                f"<li><strong>{elapsed:.3f}s</strong> "
+                f'<li class="marker-item--{status}"><strong>{elapsed:.3f}s</strong> '
                 f"{html.escape(str(marker.get('label') or 'Marker'))}</li>"
             )
         return (
@@ -401,10 +404,14 @@ pre {{ max-width: 75vw; overflow: auto; white-space: pre-wrap; }}
 .grid {{ stroke: #65706955; stroke-width: 1; }}
 .metric-label {{ fill: #eef1e8; font: 600 13px system-ui, sans-serif; }}
 .axis-label {{ fill: #969d91; font: 11px ui-monospace, monospace; }}
-.marker {{ stroke: #ff6b63; stroke-width: 1.5; stroke-dasharray: 5 4; }}
-.marker-dot {{ fill: #ff6b63; }}
+.marker {{ stroke: #68e0d1; stroke-width: 1.5; stroke-dasharray: 5 4; }}
+.marker-dot {{ fill: #68e0d1; }}
+.marker--good {{ stroke: #2fbf64; fill: #2fbf64; }}
+.marker--bad {{ stroke: #ff6b63; fill: #ff6b63; }}
 .marker-number {{ fill: #111514; font: 700 10px system-ui, sans-serif; text-anchor: middle; }}
 .marker-list {{ columns: 2; padding-left: 1.5rem; }}
+.marker-item--good::marker {{ color: #2fbf64; }}
+.marker-item--bad::marker {{ color: #ff6b63; }}
 </style>
 </head>
 <body>

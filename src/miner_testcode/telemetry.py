@@ -13,6 +13,7 @@ from .artifacts import append_jsonl
 
 CHART_LEVEL = 25
 CHART_LEVEL_NAME = "CHART"
+MARKER_STATUSES = frozenset({"info", "good", "bad"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,14 +109,19 @@ class TelemetryCapture:
         *,
         observed_at: float | None = None,
         level: str = CHART_LEVEL_NAME,
+        status: str = "info",
     ) -> bool:
         clean_label = " ".join(str(label).split())[:240]
         if not clean_label:
             return False
+        clean_status = status.lower().strip()
+        if clean_status not in MARKER_STATUSES:
+            raise ValueError(f"unsupported chart marker status: {status!r}")
         marker: dict[str, object] = {
             "at": observed_at if observed_at is not None else time.time(),
             "label": clean_label,
             "level": level[:32],
+            "status": clean_status,
         }
         with self._lock:
             self._markers.append(marker)
@@ -162,6 +168,7 @@ class TelemetryCapture:
                 "elapsed_seconds": elapsed(marker["at"]),
                 "label": marker["label"],
                 "level": marker["level"],
+                "status": marker["status"],
             }
             for marker in markers
         ]
@@ -202,13 +209,22 @@ class ChartMarkerHandler(logging.Handler):
                 self.sanitize(record.getMessage()),
                 observed_at=record.created,
                 level=record.levelname,
+                status=str(getattr(record, "chart_status", "info")),
             )
         except Exception:
             self.handleError(record)
 
 
-def log_chart(logger: logging.Logger, message: str, *args, **kwargs) -> None:
-    logger.log(CHART_LEVEL, message, *args, **kwargs)
+def log_chart(
+    logger: logging.Logger,
+    message: str,
+    *args,
+    status: str = "info",
+    **kwargs,
+) -> None:
+    extra = dict(kwargs.pop("extra", {}) or {})
+    extra["chart_status"] = status
+    logger.log(CHART_LEVEL, message, *args, extra=extra, **kwargs)
 
 
 logging.addLevelName(CHART_LEVEL, CHART_LEVEL_NAME)

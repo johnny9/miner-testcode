@@ -1,0 +1,61 @@
+[runner]
+artifacts_dir = "../artifacts"
+tests_dir = "../tests/e2e"
+pattern = "test*.py"
+verbosity = 2
+log_level = "INFO"
+cleanup_timeout = 120
+
+[publishers.local]
+enabled = true
+required = true
+filename = "report.html"
+json_filename = "result.json"
+
+[[devices]]
+name = "bitaxe-602-lab-1"
+type = "bitaxe_602"
+enabled = true
+
+[devices.options]
+read_only = false
+publication_name = "Bitaxe 602"
+
+[devices.interfaces.api]
+base_url = "http://gamma-02.local"
+timeout = 5
+retries = 2
+retry_backoff = 0.5
+poll_interval = 2
+online_timeout = 120
+
+[devices.interfaces.websocket]
+enabled = true
+required = false
+
+[devices.interfaces.serial]
+port = "/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_*-if00"
+baudrate = 115200
+capture = true
+required = true
+
+[devices.interfaces.upgrade]
+enabled = false
+method = "ota"
+expected_version = "replace-with-target-version"
+application = "../../ESP-Miner/build/esp-miner.bin"
+web = "../../ESP-Miner/build/www.bin"
+
+[tests.public_pool_smoke]
+host = "public-pool.io"
+port = 3333
+username_env = "MINER_TEST_POOL_USER"
+password_env = "MINER_TEST_POOL_PASSWORD"
+configure_device = true
+suggested_difficulty = 1000
+min_hashrate_ghs = 100
+max_work_age_seconds = 60
+readiness_timeout = 120
+stable_samples = 3
+minimum_job_notifications = 1
+probe_timeout = 30
