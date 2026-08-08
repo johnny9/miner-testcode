@@ -22,8 +22,16 @@ dependencies = [
   "websockets>=14,<16",
 ]
 
+[project.optional-dependencies]
+orchestrator = [
+  "fastapi>=0.115,<0.116",
+  "PyYAML>=6,<7",
+  "uvicorn>=0.34,<0.35",
+]
+
 [project.scripts]
 miner-test = "miner_testcode.runner:main"
+miner-orchestrator = "miner_testcode.orchestrator.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

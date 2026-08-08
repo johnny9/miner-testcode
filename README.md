@@ -39,6 +39,9 @@ AxeOS artifacts; it has no separate bridge firmware lifecycle.
   normalization.
 - Configurable local HTML/JSON, GitHub Check Run, and Mining QA Status result
   publishers.
+- A durable local orchestrator for GitHub push/PR events, cron schedules,
+  compatible lab-device assignment, local or SSH execution, and parent gate
+  publication to Mining QA Status.
 
 ## Architecture
 
@@ -410,3 +413,58 @@ record instead of creating a duplicate.
 Existing generic tests then run unchanged if the adapter provides their required
 capabilities. Device-only tests can still declare a more specific capability
 without adding model checks to shared test logic.
+
+## Test gate orchestrator
+
+The optional orchestrator application watches configured repositories, turns
+pushes, trusted-contributor pull requests, schedules, and manual requests into
+durable gate runs, and leases appropriate lab setups to individual test modules.
+`miner-test` still publishes each detailed test result. The orchestrator only
+publishes the parent gate record and links the child result IDs returned by the
+normal publisher.
+
+Install and initialize it with:
+
+```bash
+python3 -m pip install -e '.[orchestrator]'
+miner-orchestrator init-config orchestrator.yaml
+miner-orchestrator --config orchestrator.yaml validate
+miner-orchestrator --config orchestrator.yaml serve
+```
+
+The service binds `127.0.0.1:8765` by default. Its local dashboard is `/`, its
+OpenAPI document is `/openapi.json`, and interactive API documentation is at
+`/docs`. State-changing calls require the bearer token stored at
+`.miner-orchestrator/api-token`, unless `MINER_ORCHESTRATOR_API_TOKEN` or the
+configured token environment variable is set. The token is never printed.
+
+YAML remains the source of truth. API updates require the current `ETag` in an
+`If-Match` header, validate the complete configuration, retain a timestamped
+backup, and atomically replace the active file. Invalid manual edits do not
+replace the in-memory snapshot until `/api/v1/config/reload` succeeds.
+
+The configuration separates public gate selectors from private lab coordinates:
+
+- `repositories`: GitHub owner/name, main/master branches, and exact trusted PR
+  contributor logins.
+- `test_modules`: unittest patterns, compatible device types, interface needs,
+  and timeouts.
+- `gates`: triggers, changed-path filters, module lists, setup matrices, and
+  required-result policy.
+- `lab.hosts`: local or SSH execution coordinates. SSH execution explicitly
+  disables agent forwarding.
+- `lab.devices`: names, adapter types, API addresses, stable USB identity,
+  tags, and a local photo.
+- `lab.setups`: device roles, a stable platform key, runner TOML, and runner
+  device names.
+
+The REST API provides CRUD endpoints for each configuration resource, full YAML
+validation/replacement, host and device probes, USB discovery, device photos,
+setup preflight, manual gate runs, and read-only event/run/assignment history.
+Use `configs/orchestrator.example.yaml` as the complete schema example.
+
+On first observation, a branch or pull request is recorded as a baseline rather
+than unexpectedly running hardware. Later SHA changes create events. A newer PR
+head supersedes queued work for the older head but never interrupts an active
+device cleanup. SQLite WAL state preserves events, assignments, leases, and QA
+publication IDs across restarts; an interrupted active assignment fails closed.

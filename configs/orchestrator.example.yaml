@@ -1,0 +1,101 @@
+schema_version: 1
+
+controller:
+  bind: 127.0.0.1
+  port: 8765
+  state_dir: .miner-orchestrator
+  poll_seconds: 60
+  api_token_env: MINER_ORCHESTRATOR_API_TOKEN
+  environment_allowlist:
+    - MINING_QA_TOKEN
+    - MINER_TEST_POOL_USER
+    - MINER_TEST_POOL_PASSWORD
+
+qa_status:
+  enabled: false
+  base_url: https://mining-qa-status.vercel.app
+  token_env: MINING_QA_TOKEN
+
+repositories:
+  esp-miner:
+    repository: bitaxeorg/ESP-Miner
+    clone_url: https://github.com/bitaxeorg/ESP-Miner.git
+    pushes:
+      branches: [main, master]
+    pull_requests:
+      base_branches: [main, master]
+      trusted_contributors: [replace-with-github-login]
+
+test_modules:
+  public-pool-smoke:
+    pattern: test_public_pool_smoke.py
+    device_types: [bitaxe_bonanza, bitaxe_602]
+    required_interfaces: [api]
+    timeout: 900
+
+  stratum-v1-regression:
+    pattern: test_stratum_v1_regression.py
+    device_types: [bitaxe_bonanza, bitaxe_602]
+    required_interfaces: [api]
+    validation_pr: true
+    timeout: 1200
+
+lab:
+  hosts:
+    controller:
+      transport: local
+      miner_test: miner-test
+      max_parallel: 1
+
+    remote-usb-lab:
+      transport: ssh
+      ssh_target: mining-lab
+      miner_test: /opt/miner-testcode/venv/bin/miner-test
+      working_directory: /var/lib/miner-testcode
+      work_root: /var/lib/miner-testcode/orchestrator
+      max_parallel: 1
+
+  devices:
+    bonanza-01:
+      name: Bench Bonanza
+      type: bitaxe_bonanza
+      host: controller
+      enabled: true
+      addresses:
+        api: http://bitaxe.local
+      usb:
+        serial_path: /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_REPLACE-if00
+        vendor_id: "303a"
+        product_id: "1001"
+        serial_number: REPLACE
+        baudrate: 115200
+      tags: [bonanza, board-1002, bzm]
+
+  setups:
+    bonanza-local:
+      host: controller
+      platform_key: bitaxe-bonanza-1002
+      runner_profile: config.local.toml
+      runner_devices: [bonanza-lab-1]
+      devices:
+        miner: bonanza-01
+
+gates:
+  firmware-smoke:
+    name: ESP-Miner firmware smoke
+    description: Build and exercise the normal hardware smoke and Stratum gates.
+    repository: esp-miner
+    triggers:
+      pushes: true
+      pull_requests: true
+      schedules:
+        - id: nightly
+          cron: "17 3 * * *"
+    changes:
+      include: ["main/**", "components/**", "sdkconfig*"]
+      exclude: ["doc/**"]
+    test_modules: [public-pool-smoke, stratum-v1-regression]
+    targets:
+      setups: [bonanza-local]
+    required: all
+    timeout: 3600
