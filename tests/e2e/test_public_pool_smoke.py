@@ -52,7 +52,7 @@ class PublicPoolSmokeTest(MinerTestCase):
         min_hashrate = float(settings.get("min_hashrate_ghs", 100.0))
         max_work_age = float(settings.get("max_work_age_seconds", 60.0))
         readiness_timeout = float(settings.get("readiness_timeout", 120.0))
-        stable_samples = int(settings.get("stable_samples", 3))
+        stable_samples = int(settings.get("stable_samples", 10))
         minimum_job_notifications = int(settings.get("minimum_job_notifications", 1))
 
         probe_username = str(configured_probe_username or username)
