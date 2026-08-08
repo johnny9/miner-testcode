@@ -165,6 +165,38 @@ def make_summary(root: Path, *, successful: bool = True) -> RunSummary:
     )
 
 
+def add_cumulative_module_record(summary: RunSummary) -> None:
+    first = summary.tests[0]
+    telemetry = json.loads(json.dumps(first.telemetry))
+    telemetry["duration_seconds"] = 5.0
+    telemetry["samples"].append(
+        {
+            "elapsed_seconds": 5.0,
+            "source": "websocket",
+            "values": {"hashrate_ghs": 1250.0},
+        }
+    )
+    telemetry["markers"].append(
+        {
+            "elapsed_seconds": 5.0,
+            "label": "test_next passed",
+            "level": "CHART",
+            "status": "good",
+        }
+    )
+    summary.tests = (
+        first,
+        TestRecord(
+            test_id="tests.PublicPoolSmoke.test_next",
+            device=first.device,
+            outcome="passed",
+            elapsed_seconds=1.0,
+            telemetry=telemetry,
+        ),
+    )
+    summary.tests_run = 2
+
+
 def quiet_logger(name: str) -> logging.Logger:
     logger = logging.getLogger(name)
     logger.handlers = [logging.NullHandler()]
@@ -198,6 +230,17 @@ class LocalPublisherTest(unittest.TestCase):
         self.assertNotIn("file://", report)
         self.assertEqual(payload["status"], "passed")
         self.assertEqual(payload["test_code"]["repository"], "owner/miner-testcode")
+
+    def test_renders_one_telemetry_chart_per_test_module(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            summary = make_summary(Path(directory))
+            add_cumulative_module_record(summary)
+            LocalHtmlPublisher({"enabled": True}).publish(summary)
+            report = (summary.artifact_root / "report.html").read_text(encoding="utf-8")
+
+        self.assertEqual(report.count('<section class="telemetry">'), 1)
+        self.assertIn("test_next passed", report)
+        self.assertIn("<code>tests</code>", report)
 
     def test_manager_refreshes_html_with_remote_publisher_results(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -336,3 +379,31 @@ class RemotePublisherTest(unittest.TestCase):
         self.assertEqual(len(transport.uploads), 2)
         self.assertEqual(len(completions), 2)
         self.assertEqual(result.url, "https://qa.example/results/11111111-1111-1111-1111-111111111111")
+
+    def test_publishes_one_telemetry_series_per_test_module(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            summary = make_summary(Path(directory))
+            add_cumulative_module_record(summary)
+            transport = FakeTransport()
+            with patch.dict(
+                "os.environ",
+                {
+                    "MINING_QA_TOKEN": "mqa-secret",
+                    "GITHUB_REPOSITORY": "owner/repository",
+                    "GITHUB_SHA": "0123456789abcdef0123456789abcdef01234567",
+                },
+                clear=False,
+            ):
+                MiningQaStatusPublisher(
+                    {
+                        "enabled": True,
+                        "base_url": "https://qa.example",
+                        "upload_artifacts": False,
+                    },
+                    transport=transport,
+                ).publish(summary)
+
+        telemetry = transport.json_calls[0]["body"]["details"]["telemetry"]
+        self.assertEqual(len(telemetry), 1)
+        self.assertEqual(telemetry[0]["test_id"], "tests")
+        self.assertEqual(telemetry[0]["markers"][-1]["label"], "test_next passed")

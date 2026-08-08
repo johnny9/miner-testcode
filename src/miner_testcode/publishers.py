@@ -17,7 +17,7 @@ from urllib.request import Request, urlopen
 from .artifacts import append_jsonl
 from .errors import ConfigError, MinerTestError
 from .redaction import redact_text
-from .results import PublisherRecord, RunSummary, TestRecord, iso_timestamp
+from .results import PublisherRecord, RunSummary, iso_timestamp
 
 _REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _SHA = re.compile(r"^[0-9a-fA-F]{7,64}$")
@@ -199,10 +199,7 @@ class LocalHtmlPublisher:
         return " ".join(links) or "<span class=\"muted\">No artifacts</span>"
 
     @staticmethod
-    def _telemetry_chart(record: TestRecord) -> str:
-        telemetry = record.telemetry
-        if not isinstance(telemetry, dict):
-            return ""
+    def _telemetry_chart(telemetry: Mapping[str, Any]) -> str:
         metrics = telemetry.get("metrics")
         samples = telemetry.get("samples")
         markers = telemetry.get("markers")
@@ -349,7 +346,8 @@ class LocalHtmlPublisher:
             )
         return (
             '<section class="telemetry"><h3>'
-            f'{html.escape(record.device)} · <code>{html.escape(record.test_id)}</code>'
+            f'{html.escape(str(telemetry.get("device") or "Mining device"))} · '
+            f'<code>{html.escape(str(telemetry.get("test_id") or "Test module"))}</code>'
             '</h3><p class="muted">'
             f'{len(safe_samples) - gap_count} samples · {duration:.3f}s · '
             f'{gap_count} offline gaps · '
@@ -396,7 +394,7 @@ class LocalHtmlPublisher:
             for record in summary.publishers
         )
         telemetry_charts = "".join(
-            self._telemetry_chart(record) for record in summary.tests
+            self._telemetry_chart(series) for series in summary.telemetry_series()
         )
         root_links: list[str] = []
         for path in sorted(
@@ -721,15 +719,7 @@ class MiningQaStatusPublisher:
             }
             for record in summary.tests
         ]
-        telemetry = [
-            {
-                "test_id": record.test_id,
-                "device": record.device,
-                **record.telemetry,
-            }
-            for record in summary.tests
-            if record.telemetry
-        ]
+        telemetry = list(summary.telemetry_series())
         payload: dict[str, Any] = {
             "target_type": target_type[:64],
             "target_name": target_name[:128],

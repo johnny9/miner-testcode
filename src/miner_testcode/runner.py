@@ -169,14 +169,18 @@ class MiningTestResult(unittest.TextTestResult):
         if capture is not None:
             if outcome in {"passed", "expected_failure"}:
                 marker_status = "good"
-            elif outcome == "skipped":
-                marker_status = "info"
-            else:
+            elif outcome in {"failed", "error", "unexpected_success"}:
                 marker_status = "bad"
-            capture.add_marker(
-                f"Test {outcome.replace('_', ' ')}",
-                status=marker_status,
-            )
+            else:
+                marker_status = None
+            if marker_status is not None:
+                test_name = getattr(
+                    test, "_testMethodName", identity["test"].rsplit(".", 1)[-1]
+                )
+                capture.add_marker(
+                    f"{test_name} {outcome.replace('_', ' ')}",
+                    status=marker_status,
+                )
             telemetry = capture.to_dict()
         self.records.append(
             TestRecord(

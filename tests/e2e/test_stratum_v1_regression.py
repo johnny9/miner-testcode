@@ -55,6 +55,7 @@ class StratumV1RegressionTest(MinerTestCase):
             cls._class_runner.run(
                 MinerTestCase.asyncSetUp(cls._fixture_owner)
             )
+            cls._fixture_owner.chart("Stratum V1 regression suite started")
             (
                 cls._server,
                 cls._settings,
@@ -122,9 +123,7 @@ class StratumV1RegressionTest(MinerTestCase):
             server.write_transcript, self.artifacts.path / "fake-stratum.jsonl"
         )
         self.addAsyncCleanup(server.close)
-        self.chart(
-            f"Local Stratum server listening on port {server.port}", status="good"
-        )
+        self.logger.info("Local Stratum server listening on port %d", server.port)
 
         username = str(settings.get("username", "stratum-regression.worker"))
         password_env = settings.get("temporary_password_env")
@@ -266,7 +265,7 @@ class StratumV1RegressionTest(MinerTestCase):
         self.assertGreaterEqual(len(request.params), 1)
         self.assertIsInstance(request.params[0], list)
         self.assertIn("version-rolling", request.params[0])
-        self.chart("mining.configure negotiated version rolling", status="good")
+        self.logger.info("mining.configure negotiated version rolling")
 
     async def _case_02_subscribe_request(
         self,
@@ -282,7 +281,7 @@ class StratumV1RegressionTest(MinerTestCase):
         self.assertGreaterEqual(len(request.params), 1)
         self.assertIsInstance(request.params[0], str)
         self.assertTrue(request.params[0])
-        self.chart("mining.subscribe completed", status="good")
+        self.logger.info("mining.subscribe completed")
 
     async def _case_03_authorize_request(
         self,
@@ -299,7 +298,7 @@ class StratumV1RegressionTest(MinerTestCase):
         self.assertGreaterEqual(len(request.params), 2)
         self.assertEqual(request.params[0], username)
         self.assertEqual(request.params[1], "<redacted>")
-        self.chart("mining.authorize completed", status="good")
+        self.logger.info("mining.authorize completed")
         return await self._wait_for_handshake(server, settings, username)
 
     async def _case_04_mining_notify_and_accepted_share(
@@ -330,7 +329,7 @@ class StratumV1RegressionTest(MinerTestCase):
             len(submission.extranonce2), expected_extranonce2_chars
         )
         await self._wait_for_pool_difficulty(difficulty, timeout=accept_timeout)
-        self.chart("mining.notify produced a valid share", status="good")
+        self.logger.info("mining.notify produced a valid share")
 
         generation = self.device.state.generation
         await self.device.state.wait_for(
@@ -339,7 +338,7 @@ class StratumV1RegressionTest(MinerTestCase):
             description="the fake-pool accepted-share response",
             after_generation=generation,
         )
-        self.chart("Accepted share reached device state", status="good")
+        self.logger.info("Accepted share reached device state")
 
     async def _case_05_difficulty_change_and_fresh_work(
         self,
@@ -372,9 +371,7 @@ class StratumV1RegressionTest(MinerTestCase):
         await self._wait_for_pool_difficulty(
             changed_difficulty, timeout=accept_timeout
         )
-        self.chart(
-            "mining.set_difficulty changed the device pool target", status="good"
-        )
+        self.logger.info("mining.set_difficulty changed the device pool target")
 
         accepted_before = self.device.state.latest.shares_accepted
         submission = await self._mine_one_share(
@@ -385,9 +382,8 @@ class StratumV1RegressionTest(MinerTestCase):
             timeout=share_timeout,
         )
         self.assertEqual(submission.username, username)
-        self.chart(
-            "Fresh mining.notify used the changed difficulty and produced a share",
-            status="good",
+        self.logger.info(
+            "Fresh mining.notify used the changed difficulty and produced a share"
         )
 
         generation = self.device.state.generation
@@ -397,7 +393,7 @@ class StratumV1RegressionTest(MinerTestCase):
             description="the changed-difficulty accepted-share response",
             after_generation=generation,
         )
-        self.chart("Changed-difficulty share reached device state", status="good")
+        self.logger.info("Changed-difficulty share reached device state")
 
     def test_01_configure_extension_negotiation(self) -> None:
         self._run_ordered_case(
@@ -463,7 +459,7 @@ class StratumV1RegressionTest(MinerTestCase):
             fragment_sizes=(1, 2, 3, 5, 8, 13, 21, 34),
             fragment_delay=0.01,
         )
-        self.chart("Fragmented JSON-RPC line produced valid work", status="good")
+        self.logger.info("Fragmented JSON-RPC line produced valid work")
 
         consecutive = MiningJob.standard("consecutive-notify")
         after = self._latest_sequence(server)
@@ -485,7 +481,7 @@ class StratumV1RegressionTest(MinerTestCase):
             after_sequence=after,
             timeout=timeout,
         )
-        self.chart("Consecutive JSON-RPC lines were both processed", status="good")
+        self.logger.info("Consecutive JSON-RPC lines were both processed")
 
         boundary = MiningJob.standard("boundary-successor")
         maximum_object = b"{}" + b" " * (STRATUM_V1_MAX_JSON_LINE_SIZE - 2)
@@ -504,7 +500,7 @@ class StratumV1RegressionTest(MinerTestCase):
             after_sequence=after,
             timeout=timeout,
         )
-        self.chart("16 KiB line preserved and processed its successor", status="good")
+        self.logger.info("16 KiB line preserved and processed its successor")
 
         for label, invalid_bytes in (
             ("embedded NUL", b"{}\x00\n"),
@@ -533,7 +529,7 @@ class StratumV1RegressionTest(MinerTestCase):
                 connection_id=connection_id,
                 timeout=timeout,
             )
-            self.chart(f"Recovered after {label}", status="good")
+            self.logger.info("Recovered after %s", label)
         return handshake
 
     async def _case_91_invalid_messages_do_not_create_work_or_corrupt_state(
@@ -614,7 +610,7 @@ class StratumV1RegressionTest(MinerTestCase):
                 len(submission.extranonce2), expected_extranonce2_chars
             )
             await self._park_work(server, connection_id, index)
-            self.chart(f"Rejected {name} and accepted successor", status="good")
+            self.logger.info("Rejected %s and accepted successor", name)
 
         state_cases: list[tuple[str, bytes]] = [
             ("non-object", b"[]\n"),
@@ -678,7 +674,7 @@ class StratumV1RegressionTest(MinerTestCase):
                 len(submission.extranonce2), expected_extranonce2_chars
             )
             await self._park_work(server, connection_id, 100 + offset)
-            self.chart(f"State survived {name}", status="good")
+            self.logger.info("State survived %s", name)
 
     @validation_test(1849)
     def test_90_fragmented_consecutive_and_boundary_messages(self) -> None:

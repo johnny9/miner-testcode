@@ -132,13 +132,13 @@ class MinerTestCase(unittest.IsolatedAsyncioTestCase):
 
         self._baseline: CleanState | None = None
         self.addAsyncCleanup(self._cleanup_device)
-        self.chart("Device lifecycle started")
+        self.logger.info("Device lifecycle started")
         await self.device.start()
         await self.device.ensure_target_firmware()
-        self.chart("Target firmware ready", status="good")
+        self.logger.info("Target firmware ready")
         self._baseline = await self.device.snapshot_clean_state()
         self.baseline = self._baseline
-        self.chart("Test body started")
+        self.logger.info("Test body started")
 
     async def _cleanup_device(self) -> None:
         errors: list[BaseException] = []
@@ -146,11 +146,11 @@ class MinerTestCase(unittest.IsolatedAsyncioTestCase):
         timeout = context.project.runner.cleanup_timeout if context else 120.0
         try:
             if self._baseline is not None:
-                self.chart("Clean-state restore started")
+                self.logger.info("Clean-state restore started")
                 await asyncio.wait_for(
                     self.device.restore_clean_state(self._baseline), timeout=timeout
                 )
-                self.chart("Clean state restored", status="good")
+                self.logger.info("Clean state restored")
         except BaseException as exc:
             errors.append(exc)
             self.logger.exception("device clean-state restoration failed")
@@ -161,7 +161,7 @@ class MinerTestCase(unittest.IsolatedAsyncioTestCase):
             self.logger.exception("device log collection failed")
         try:
             await self.device.close()
-            self.chart("Device lifecycle finished", status="good")
+            self.logger.info("Device lifecycle finished")
         except BaseException as exc:
             errors.append(exc)
             self.logger.exception("device interface shutdown failed")

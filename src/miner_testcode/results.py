@@ -85,6 +85,36 @@ class RunSummary:
             return "skipped"
         return "passed" if self.successful else "failed"
 
+    def telemetry_series(self) -> tuple[dict[str, Any], ...]:
+        """Return the richest telemetry snapshot for each device and test module."""
+
+        selected: dict[
+            tuple[str, str], tuple[tuple[float, int, int], dict[str, Any]]
+        ] = {}
+        for record in self.tests:
+            telemetry = record.telemetry
+            if not isinstance(telemetry, dict):
+                continue
+            parts = record.test_id.rsplit(".", 2)
+            module_id = parts[0] if len(parts) == 3 else record.test_id
+            samples = telemetry.get("samples")
+            markers = telemetry.get("markers")
+            score = (
+                float(telemetry.get("duration_seconds") or 0.0),
+                len(samples) if isinstance(samples, list) else 0,
+                len(markers) if isinstance(markers, list) else 0,
+            )
+            series = {
+                "test_id": module_id,
+                "device": record.device,
+                **telemetry,
+            }
+            key = (record.device, module_id)
+            current = selected.get(key)
+            if current is None or score >= current[0]:
+                selected[key] = (score, series)
+        return tuple(series for _, series in selected.values())
+
     def to_dict(
         self,
         *,

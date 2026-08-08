@@ -279,18 +279,18 @@ Library-style tests can use the logging API directly with
 
 Use `status="good"` for successful milestones and `status="bad"` for failures;
 informational markers are the default. The test runner also appends a green or
-red final outcome marker automatically. The message remains in `test.log` and
-becomes a labeled vertical line in both
-the local and Mining QA Status telemetry charts. Device lifecycle, firmware
-readiness, test-body start, and clean-state restoration are marked
-automatically. Marker text is passed through the same privacy redaction as
-published logs. REST fallback polling defaults to 0.5 seconds (2 Hz), and the
-smoke test requires 10 stable samples by default, providing about five seconds
-of post-recovery telemetry for smoother charts. Offline transitions are stored
-as explicit gaps without metric
-values, so charts do not invent zero readings or connect lines across an
-outage. The full stream remains in `telemetry.jsonl`; structured result
-payloads retain at most 2,000 evenly spaced samples, including both endpoints.
+red final outcome marker named after the test method. The message remains in
+`test.log` and becomes a labeled vertical line in both the local and Mining QA
+Status telemetry charts. Routine device lifecycle events stay at `INFO` so they
+do not clutter charts. Cumulative snapshots from class-scoped tests are reduced
+to one chart per device and test module. Marker text is passed through the same
+privacy redaction as published logs. REST fallback polling defaults to 0.5
+seconds (2 Hz), and the smoke test requires 10 stable samples by default,
+providing about five seconds of post-recovery telemetry for smoother charts.
+Offline transitions are stored as explicit gaps without metric values, so
+charts do not invent zero readings or connect lines across an outage. The full
+stream remains in `telemetry.jsonl`; structured result payloads retain at most
+2,000 evenly spaced samples, including both endpoints.
 
 ## Result publishers
 
