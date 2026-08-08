@@ -25,6 +25,15 @@ repositories:
     pull_requests:
       base_branches: [main, master]
       trusted_contributors: [replace-with-github-login]
+    artifacts:
+      firmware-ota:
+        provider: github_actions
+        workflow: build.yml
+        artifact_name: esp-miner.bin
+        filename: esp-miner.bin
+        token_env: GITHUB_TOKEN
+        wait_timeout: 1800
+        poll_seconds: 15
 
 test_modules:
   public-pool-smoke:
@@ -35,6 +44,7 @@ test_modules:
 
   stratum-v1-regression:
     pattern: test_stratum_v1_regression.py
+    runner_profile: config.stratum.local.toml
     device_types: [bitaxe_bonanza, bitaxe_602]
     required_interfaces: [api]
     validation_pr: true
@@ -56,29 +66,31 @@ lab:
       max_parallel: 1
 
   devices:
-    bonanza-01:
-      name: Bench Bonanza
-      type: bitaxe_bonanza
+    gamma-602:
+      name: Bench Gamma 602
+      type: bitaxe_602
       host: controller
       enabled: true
       addresses:
         api: http://bitaxe.local
+      expected:
+        board_version: "602"
       usb:
         serial_path: /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_REPLACE-if00
         vendor_id: "303a"
         product_id: "1001"
         serial_number: REPLACE
         baudrate: 115200
-      tags: [bonanza, board-1002, bzm]
+      tags: [gamma, board-602, bitaxe]
 
   setups:
-    bonanza-local:
+    gamma-local:
       host: controller
-      platform_key: bitaxe-bonanza-1002
+      platform_key: bitaxe-gamma-602
       runner_profile: config.local.toml
-      runner_devices: [bonanza-lab-1]
+      runner_devices: [gamma-02]
       devices:
-        miner: bonanza-01
+        miner: gamma-602
 
 gates:
   firmware-smoke:
@@ -96,6 +108,11 @@ gates:
       exclude: ["doc/**"]
     test_modules: [public-pool-smoke, stratum-v1-regression]
     targets:
-      setups: [bonanza-local]
+      setups: [gamma-local]
+    deployment:
+      method: esp_miner_http_ota
+      artifact: firmware-ota
+      device_roles: [miner]
+      reboot_timeout: 180
     required: all
     timeout: 3600

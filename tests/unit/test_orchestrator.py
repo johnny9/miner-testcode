@@ -13,7 +13,7 @@ from miner_testcode.errors import ConfigError
 from miner_testcode.orchestrator.config import ConfigStore, validate_config
 from miner_testcode.orchestrator.database import OrchestratorDatabase
 from miner_testcode.orchestrator.engine import OrchestratorEngine, Planner
-from miner_testcode.orchestrator.events import cron_matches, paths_match
+from miner_testcode.orchestrator.events import EventCollector, cron_matches, paths_match
 from miner_testcode.orchestrator.qa_status import GatePublisher
 
 
@@ -107,6 +107,37 @@ class ConfigStoreTest(unittest.TestCase):
             with self.assertRaisesRegex(ConfigError, "unknown setup"):
                 validate_config(document)
 
+    def test_validates_artifact_deployment_and_module_profile_override(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            document = configuration(Path(directory))
+            document["repositories"]["firmware"]["artifacts"] = {
+                "ota": {
+                    "workflow": "build.yml",
+                    "artifact_name": "esp-miner.bin",
+                    "filename": "esp-miner.bin",
+                }
+            }
+            document["test_modules"]["regression"]["runner_profile"] = (
+                "regression.toml"
+            )
+            document["lab"]["devices"]["bonanza"]["expected"] = {
+                "board_version": "1002"
+            }
+            document["gates"]["firmware-smoke"]["deployment"] = {
+                "artifact": "ota",
+                "device_roles": ["miner"],
+            }
+            validated = validate_config(document)
+
+            self.assertEqual(
+                validated["test_modules"]["regression"]["runner_profile"],
+                "regression.toml",
+            )
+            self.assertEqual(
+                validated["gates"]["firmware-smoke"]["deployment"]["method"],
+                "esp_miner_http_ota",
+            )
+
 
 class SchedulingTest(unittest.TestCase):
     def test_cron_and_change_filters(self) -> None:
@@ -121,6 +152,52 @@ class SchedulingTest(unittest.TestCase):
                 {"include": ["**"], "exclude": ["doc/**"]},
             )
         )
+
+    def test_push_event_carries_merged_pull_request_metadata(self) -> None:
+        class Github:
+            def branch_head(self, repository, branch):
+                return "b" * 40, None
+
+            def changed_paths(self, repository, base, head):
+                return ["src/main.c"]
+
+            def merged_pull_request(self, repository, commit_sha, base_branch):
+                return {
+                    "number": 42,
+                    "html_url": "https://github.example/pull/42",
+                    "merged_at": "2026-08-08T00:00:00Z",
+                    "user": {"login": "alice"},
+                    "base": {"ref": "main"},
+                }
+
+            def open_pull_requests(self, repository):
+                return []
+
+        with tempfile.TemporaryDirectory() as directory:
+            database = OrchestratorDatabase(Path(directory) / "state.sqlite3")
+            database.set_cursor(
+                "github:owner/firmware:branch:main",
+                "a" * 40,
+            )
+            collector = EventCollector(database, Github())  # type: ignore[arg-type]
+            created = collector.poll_repository(
+                "firmware",
+                {
+                    "repository": "owner/firmware",
+                    "pushes": {"branches": ["main"]},
+                    "pull_requests": {
+                        "base_branches": ["main"],
+                        "trusted_contributors": ["alice"],
+                    },
+                },
+            )
+            event = database.list_events()[0]
+            database.close()
+
+        self.assertEqual(created, 1)
+        self.assertEqual(event["trigger_type"], "push")
+        self.assertEqual(event["pr_number"], 42)
+        self.assertEqual(event["contributor"], "alice")
 
     def test_plans_one_assignment_per_setup_and_module_idempotently(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

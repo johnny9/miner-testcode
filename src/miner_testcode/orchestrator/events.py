@@ -66,6 +66,27 @@ class GithubClient:
             raise GithubError(f"GitHub did not return pull requests for {repository}")
         return [item for item in payload if isinstance(item, dict)]
 
+    def merged_pull_request(
+        self,
+        repository: str,
+        commit_sha: str,
+        base_branch: str,
+    ) -> dict[str, Any] | None:
+        payload, _, _ = self.get(
+            f"/repos/{repository}/commits/{quote(commit_sha, safe='')}/pulls"
+        )
+        if not isinstance(payload, list):
+            return None
+        candidates = []
+        for item in payload:
+            if not isinstance(item, dict) or not item.get("merged_at"):
+                continue
+            base = item.get("base") or {}
+            if isinstance(base, dict) and base.get("ref") == base_branch:
+                candidates.append(item)
+        candidates.sort(key=lambda item: int(item.get("number") or 0), reverse=True)
+        return candidates[0] if candidates else None
+
     def changed_paths(self, repository: str, base: str, head: str) -> list[str]:
         payload, _, _ = self.get(f"/repos/{repository}/compare/{base}...{head}")
         if not isinstance(payload, dict):
@@ -157,14 +178,25 @@ class EventCollector:
                 self.database.set_cursor(source_key, head, etag)
                 continue
             paths = self.github.changed_paths(repository, previous["value"], head)
+            merged_pull = self.github.merged_pull_request(repository, head, branch)
+            pull_user = (merged_pull or {}).get("user") or {}
+            pull_number = (merged_pull or {}).get("number")
+            if not isinstance(pull_number, int):
+                pull_number = None
             _, inserted = self.database.create_event(
                 event_key=f"{source_key}:{head}",
                 repository_id=repository_id,
                 trigger_type="push",
                 commit_sha=head,
                 branch=branch,
+                pr_number=pull_number,
+                pr_url=str((merged_pull or {}).get("html_url") or "") or None,
+                contributor=str(pull_user.get("login") or "") or None,
                 changed_paths=paths,
-                payload={"previous_sha": previous["value"]},
+                payload={
+                    "previous_sha": previous["value"],
+                    "merged_pull_request": pull_number,
+                },
             )
             created += int(inserted)
             self.database.set_cursor(source_key, head, etag)

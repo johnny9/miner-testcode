@@ -160,12 +160,68 @@ def validate_config(document: Mapping[str, Any]) -> dict[str, Any]:
             pulls["trusted_contributors"],
             f"repositories.{repository_id}.pull_requests.trusted_contributors",
         )
+        artifacts = _mapping(
+            repository.setdefault("artifacts", {}),
+            f"repositories.{repository_id}.artifacts",
+        )
+        for artifact_id, artifact_value in artifacts.items():
+            _identifier(
+                artifact_id,
+                f"repositories.{repository_id}.artifacts artifact id",
+            )
+            artifact = _mapping(
+                artifact_value,
+                f"repositories.{repository_id}.artifacts.{artifact_id}",
+            )
+            provider = artifact.setdefault("provider", "github_actions")
+            if provider != "github_actions":
+                raise ConfigError(
+                    f"repositories.{repository_id}.artifacts.{artifact_id}.provider "
+                    "must be github_actions"
+                )
+            _string(
+                artifact.get("workflow"),
+                f"repositories.{repository_id}.artifacts.{artifact_id}.workflow",
+            )
+            _string(
+                artifact.get("artifact_name"),
+                f"repositories.{repository_id}.artifacts.{artifact_id}.artifact_name",
+            )
+            filename = _string(
+                artifact.get("filename"),
+                f"repositories.{repository_id}.artifacts.{artifact_id}.filename",
+            )
+            if Path(filename).name != filename:
+                raise ConfigError(
+                    f"repositories.{repository_id}.artifacts.{artifact_id}.filename "
+                    "must be a basename"
+                )
+            _string(
+                artifact.get("token_env", "GITHUB_TOKEN"),
+                f"repositories.{repository_id}.artifacts.{artifact_id}.token_env",
+            )
+            for key, default in (
+                ("wait_timeout", 1800),
+                ("poll_seconds", 15),
+                ("max_bytes", 64 * 1024 * 1024),
+            ):
+                value = artifact.setdefault(key, default)
+                if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+                    raise ConfigError(
+                        f"repositories.{repository_id}.artifacts.{artifact_id}.{key} "
+                        "must be positive"
+                    )
 
     modules = _mapping(raw.setdefault("test_modules", {}), "test_modules")
     for module_id, value in modules.items():
         _identifier(module_id, f"test_modules.{module_id}")
         module = _mapping(value, f"test_modules.{module_id}")
         _string(module.get("pattern"), f"test_modules.{module_id}.pattern")
+        if "runner_profile" in module:
+            _string(
+                module["runner_profile"],
+                f"test_modules.{module_id}.runner_profile",
+            )
         _string_list(module.get("device_types", []), f"test_modules.{module_id}.device_types")
         _string_list(module.get("required_interfaces", []), f"test_modules.{module_id}.required_interfaces")
 
@@ -179,6 +235,9 @@ def validate_config(document: Mapping[str, Any]) -> dict[str, Any]:
     for device_id, value in devices.items():
         _identifier(device_id, f"lab.devices.{device_id}")
         _validate_device(device_id, value, hosts)
+        expected = _mapping(value.setdefault("expected", {}), f"lab.devices.{device_id}.expected")
+        if "board_version" in expected:
+            _string(expected["board_version"], f"lab.devices.{device_id}.expected.board_version")
     for setup_id, value in setups.items():
         _identifier(setup_id, f"lab.setups.{setup_id}")
         setup = _mapping(value, f"lab.setups.{setup_id}")
@@ -230,6 +289,57 @@ def validate_config(document: Mapping[str, Any]) -> dict[str, Any]:
         policy = gate.setdefault("required", "all")
         if policy not in {"all", "any"}:
             raise ConfigError(f"gates.{gate_id}.required must be all or any")
+
+        deployment = gate.get("deployment")
+        if deployment is not None:
+            deployment = _mapping(deployment, f"gates.{gate_id}.deployment")
+            method = deployment.setdefault("method", "esp_miner_http_ota")
+            if method != "esp_miner_http_ota":
+                raise ConfigError(
+                    f"gates.{gate_id}.deployment.method must be esp_miner_http_ota"
+                )
+            artifact_id = _identifier(
+                deployment.get("artifact"),
+                f"gates.{gate_id}.deployment.artifact",
+            )
+            if artifact_id not in repositories[repository_id]["artifacts"]:
+                raise ConfigError(
+                    f"gates.{gate_id}.deployment references unknown artifact "
+                    f"{artifact_id!r}"
+                )
+            roles = _string_list(
+                deployment.get("device_roles"),
+                f"gates.{gate_id}.deployment.device_roles",
+                required=True,
+            )
+            reboot_timeout = deployment.setdefault("reboot_timeout", 180)
+            if (
+                isinstance(reboot_timeout, bool)
+                or not isinstance(reboot_timeout, (int, float))
+                or reboot_timeout <= 0
+            ):
+                raise ConfigError(
+                    f"gates.{gate_id}.deployment.reboot_timeout must be positive"
+                )
+            for setup_id in target_setups:
+                setup_devices = setups[setup_id]["devices"]
+                for role in roles:
+                    if role not in setup_devices:
+                        raise ConfigError(
+                            f"gates.{gate_id}.deployment role {role!r} is missing "
+                            f"from setup {setup_id!r}"
+                        )
+                    device = devices[setup_devices[role]]
+                    if not device.get("addresses", {}).get("api"):
+                        raise ConfigError(
+                            f"gates.{gate_id}.deployment device role {role!r} "
+                            "requires an API address"
+                        )
+                    if not device.get("expected", {}).get("board_version"):
+                        raise ConfigError(
+                            f"gates.{gate_id}.deployment device role {role!r} "
+                            "requires expected.board_version"
+                        )
 
         for setup_id in target_setups:
             setup_device_ids = setups[setup_id]["devices"].values()

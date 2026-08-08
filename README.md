@@ -446,11 +446,13 @@ replace the in-memory snapshot until `/api/v1/config/reload` succeeds.
 The configuration separates public gate selectors from private lab coordinates:
 
 - `repositories`: GitHub owner/name, main/master branches, and exact trusted PR
-  contributor logins.
+  contributor logins. An optional GitHub Actions artifact map pins workflow,
+  artifact name, archive member, download bounds, and token environment.
 - `test_modules`: unittest patterns, compatible device types, interface needs,
   and timeouts.
 - `gates`: triggers, changed-path filters, module lists, setup matrices, and
-  required-result policy.
+  required-result policy. A gate may deploy one verified OTA artifact to named
+  setup roles before any test module starts.
 - `lab.hosts`: local or SSH execution coordinates. SSH execution explicitly
   disables agent forwarding.
 - `lab.devices`: names, adapter types, API addresses, stable USB identity,
@@ -468,3 +470,13 @@ than unexpectedly running hardware. Later SHA changes create events. A newer PR
 head supersedes queued work for the older head but never interrupts an active
 device cleanup. SQLite WAL state preserves events, assignments, leases, and QA
 publication IDs across restarts; an interrupted active assignment fails closed.
+
+For `github_actions` artifacts, the orchestrator waits for a successful workflow
+run whose `head_sha` exactly matches the event commit, downloads the named ZIP
+with `GITHUB_TOKEN`, verifies GitHub's archive digest, extracts only the expected
+basename, and records the firmware SHA-256. ESP-Miner HTTP deployment accepts
+only that configured OTA member, checks the live board version before upload,
+uses `/api/system/OTA`, waits for the same board identity to return, and writes a
+fail-closed per-run deployment marker. Factory/merged images are not used for
+OTA. Push events also retain an associated merged PR number when GitHub reports
+one, allowing opt-in PR regression cases to run after merge.

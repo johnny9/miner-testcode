@@ -14,6 +14,7 @@ from ..publishers import PublishError
 from .config import ConfigStore, config_digest
 from .database import OrchestratorDatabase
 from .events import EventCollector, paths_match
+from .firmware import FirmwareDeployer
 from .qa_status import GatePublisher
 
 logger = logging.getLogger(__name__)
@@ -87,10 +88,12 @@ class AssignmentExecutor:
         database: OrchestratorDatabase,
         config_store: ConfigStore,
         gate_publisher: GatePublisher,
+        firmware_deployer: FirmwareDeployer | None = None,
     ) -> None:
         self.database = database
         self.config_store = config_store
         self.gate_publisher = gate_publisher
+        self.firmware_deployer = firmware_deployer or FirmwareDeployer()
 
     def _resources(self, assignment: Mapping[str, Any], config: Mapping[str, Any]) -> list[str]:
         setup = config["lab"]["setups"][assignment["setup_id"]]
@@ -156,9 +159,28 @@ class AssignmentExecutor:
         job_dir.mkdir(parents=True, exist_ok=True)
         pointer = job_dir / "result-pointer.json"
         log_path = job_dir / "worker.log"
-        profile = Path(setup["runner_profile"])
+        profile = Path(module.get("runner_profile") or setup["runner_profile"])
         if host["transport"] == "local" and not profile.is_absolute():
             profile = (snapshot.source.parent / profile).resolve()
+
+        try:
+            deployment = self.firmware_deployer.ensure(
+                run,
+                assignment["setup_id"],
+                config,
+                state_dir,
+            )
+        except ConfigError as exc:
+            log_path.write_text(
+                f"{type(exc).__name__}: {exc}\n",
+                encoding="utf-8",
+            )
+            self.database.finish_assignment(
+                assignment["id"],
+                status="error",
+                detail=str(exc)[:2000],
+            )
+            return
 
         metadata = {
             "gate_id": run["gate_id"],
@@ -177,6 +199,8 @@ class AssignmentExecutor:
             "gate_result_id": run.get("qa_result_id"),
             "gate_result_url": run.get("qa_result_url"),
         }
+        if deployment:
+            metadata["firmware"] = deployment
         environment = self._safe_environment(config["controller"])
         result_pointer = pointer
         if host["transport"] == "ssh":
