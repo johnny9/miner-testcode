@@ -49,6 +49,7 @@ class RunnerConfig:
     verbosity: int = 2
     log_level: str = "INFO"
     cleanup_timeout: float = 120.0
+    validation_prs: frozenset[int] = frozenset()
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,6 +113,21 @@ def _path_from(base: Path, value: Any, default: str, context: str) -> Path:
     return path if path.is_absolute() else (base / path).resolve()
 
 
+def _validation_prs(value: Any) -> frozenset[int]:
+    if value is None:
+        return frozenset()
+    if not isinstance(value, list):
+        raise ConfigError("runner.validation_prs must be an array of PR numbers")
+    prs: set[int] = set()
+    for item in value:
+        if isinstance(item, bool) or not isinstance(item, int) or item <= 0:
+            raise ConfigError(
+                "runner.validation_prs must contain positive integer PR numbers"
+            )
+        prs.add(item)
+    return frozenset(prs)
+
+
 def load_config(path: str | os.PathLike[str]) -> ProjectConfig:
     source = Path(path).expanduser().resolve()
     try:
@@ -139,6 +155,7 @@ def load_config(path: str | os.PathLike[str]) -> ProjectConfig:
         verbosity=int(runner_raw.get("verbosity", 2)),
         log_level=str(runner_raw.get("log_level", "INFO")).upper(),
         cleanup_timeout=float(runner_raw.get("cleanup_timeout", 120.0)),
+        validation_prs=_validation_prs(runner_raw.get("validation_prs")),
     )
     if runner.verbosity < 0:
         raise ConfigError("runner.verbosity must be non-negative")

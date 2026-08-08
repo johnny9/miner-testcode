@@ -129,6 +129,13 @@ share_difficulty = 256
 changed_difficulty = 512
 ```
 
+PR-only validation cases are disabled by default. Test methods declare one or
+more related PR numbers, and the runner enables matching opt-in cases in
+addition to the normal suite. Select PRs persistently with
+`validation_prs = [1849]` in the `[runner]` table or for one invocation with
+repeatable `--validation-pr 1849` options. Unselected cases remain discoverable
+and are reported as skipped.
+
 An exact value such as `${MINER_TEST_POOL_PASSWORD}` is read from the environment
 at runtime. Request and run metadata never serialize HTTP bodies or the resolved
 configuration, so write-only pool passwords are not copied into artifacts.
@@ -232,7 +239,11 @@ messages, the exact 16 KiB boundary, oversized lines, embedded NULs, strict
 notify field types and widths, Merkle limits, coinbase hex and lock-time
 framing, positive difficulty, integer IDs, and safe extranonce lengths. These
 are reported as explicit skips until run against firmware expected to implement
-the corresponding parser hardening.
+the corresponding parser hardening. To opt in for a target PR build, run:
+
+```bash
+miner-test --config config.local.toml --validation-pr 1849
+```
 
 The regression changes pool settings and restarts the device, so the configured
 adapter must not be read-only. The normal test lifecycle snapshots the original

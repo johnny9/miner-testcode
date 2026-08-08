@@ -5,7 +5,7 @@ import logging
 import unittest
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping, TypeVar
 
 from .artifacts import RunArtifacts, TestArtifacts
 from .capabilities import missing
@@ -15,6 +15,25 @@ from .devices.base import CleanState, MiningDevice
 from .redaction import PrivacyFormatter, redact_text
 from .telemetry import ChartMarkerHandler, log_chart
 
+_TestMethod = TypeVar("_TestMethod", bound=Callable[..., Any])
+
+
+def validation_test(*pr_numbers: int) -> Callable[[_TestMethod], _TestMethod]:
+    """Mark a test as opt-in coverage associated with one or more PRs."""
+
+    if not pr_numbers or any(
+        isinstance(pr, bool) or not isinstance(pr, int) or pr <= 0
+        for pr in pr_numbers
+    ):
+        raise ValueError("validation_test requires positive integer PR numbers")
+    related_prs = frozenset(pr_numbers)
+
+    def decorate(function: _TestMethod) -> _TestMethod:
+        setattr(function, "validation_prs", related_prs)
+        return function
+
+    return decorate
+
 
 @dataclass(frozen=True, slots=True)
 class TestContext:
@@ -22,6 +41,7 @@ class TestContext:
     device_config: DeviceConfig
     run_artifacts: RunArtifacts
     project_root: Path
+    validation_prs: frozenset[int] = frozenset()
 
 
 class MinerTestCase(unittest.IsolatedAsyncioTestCase):
@@ -38,6 +58,18 @@ class MinerTestCase(unittest.IsolatedAsyncioTestCase):
     @classmethod
     def bind_context(cls, test: "MinerTestCase", context: TestContext) -> None:
         test._context = context
+
+    def setUp(self) -> None:
+        if self._context is None:
+            self.fail("MinerTestCase must be run by miner-test with a device context")
+        method = getattr(type(self), self._testMethodName)
+        related_prs = getattr(method, "validation_prs", frozenset())
+        if related_prs and related_prs.isdisjoint(self._context.validation_prs):
+            listed = ", ".join(f"#{number}" for number in sorted(related_prs))
+            self.skipTest(
+                f"validation test for {listed}; enable with runner.validation_prs "
+                "or --validation-pr"
+            )
 
     async def asyncSetUp(self) -> None:
         if self._context is None:

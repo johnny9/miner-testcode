@@ -36,6 +36,7 @@ def _load_device_suite(
     *,
     pattern: str,
     project_root: Path,
+    validation_prs: frozenset[int] = frozenset(),
 ) -> unittest.TestSuite:
     loader = unittest.TestLoader()
     discovered = loader.discover(str(project.runner.tests_dir), pattern=pattern)
@@ -45,6 +46,7 @@ def _load_device_suite(
         device_config=device,
         run_artifacts=artifacts,
         project_root=project_root,
+        validation_prs=validation_prs,
     )
     count = 0
     class_scoped_types: dict[type[MinerTestCase], type[MinerTestCase]] = {}
@@ -262,6 +264,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--pattern",
         help="override unittest discovery pattern",
     )
+    parser.add_argument(
+        "--validation-pr",
+        action="append",
+        type=int,
+        default=[],
+        metavar="PR",
+        help=(
+            "enable opt-in validation tests associated with a PR number; "
+            "repeat for multiple PRs"
+        ),
+    )
     parser.add_argument("-v", "--verbose", action="count", default=0)
     return parser
 
@@ -269,6 +282,12 @@ def build_parser() -> argparse.ArgumentParser:
 def run(argv: list[str] | None = None) -> bool:
     args = build_parser().parse_args(argv)
     project = load_config(args.config)
+    invalid_cli_prs = [number for number in args.validation_pr if number <= 0]
+    if invalid_cli_prs:
+        raise ConfigError("--validation-pr must be a positive integer")
+    validation_prs = frozenset(
+        {*project.runner.validation_prs, *args.validation_pr}
+    )
     devices = project.selected_devices(set(args.devices) if args.devices else None)
     if not devices:
         raise ConfigError("no enabled devices are configured")
@@ -298,6 +317,7 @@ def run(argv: list[str] | None = None) -> bool:
         "devices": [device.publication_name for device in devices],
         "tests_dir": relative_path(project.runner.tests_dir),
         "pattern": args.pattern or project.runner.pattern,
+        "validation_prs": sorted(validation_prs),
         "python": sys.version,
         "test_code": {
             "repository": test_code.record.repository,
@@ -319,6 +339,7 @@ def run(argv: list[str] | None = None) -> bool:
                 artifacts,
                 pattern=pattern,
                 project_root=test_code.root,
+                validation_prs=validation_prs,
             )
         )
 

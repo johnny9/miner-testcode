@@ -6,9 +6,19 @@ import unittest
 from pathlib import Path
 
 from miner_testcode.config import ConfigError, load_config
+from miner_testcode.runner import build_parser
 
 
 class ConfigTest(unittest.TestCase):
+    def test_cli_can_select_validation_prs(self) -> None:
+        self.assertEqual(build_parser().parse_args([]).validation_pr, [])
+        self.assertEqual(
+            build_parser()
+            .parse_args(["--validation-pr", "1849", "--validation-pr", "1844"])
+            .validation_pr,
+            [1849, 1844],
+        )
+
     def test_loads_generic_interfaces_and_environment_values(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "config.toml"
@@ -16,6 +26,7 @@ class ConfigTest(unittest.TestCase):
                 """
 [runner]
 tests_dir = "e2e"
+validation_prs = [1849, 1844]
 
 [publishers.local]
 enabled = true
@@ -47,9 +58,25 @@ host = "public-pool.io"
             config.devices[0].interface("api")["base_url"], "http://bitaxe.local"
         )
         self.assertTrue(config.runner.tests_dir.is_absolute())
+        self.assertEqual(config.runner.validation_prs, frozenset({1849, 1844}))
         self.assertTrue(config.publisher_settings("local")["enabled"])
         with self.assertRaises(TypeError):
             config.devices[0].interfaces["new"] = {}  # type: ignore[index]
+
+    def test_rejects_invalid_validation_pr_config(self) -> None:
+        invalid_values = ('"1849"', '[1849, false]', '[0]')
+        for value in invalid_values:
+            with (
+                self.subTest(value=value),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                path = Path(directory) / "config.toml"
+                path.write_text(
+                    f"[runner]\nvalidation_prs = {value}\n",
+                    encoding="utf-8",
+                )
+                with self.assertRaisesRegex(ConfigError, "validation_prs"):
+                    load_config(path)
 
     def test_rejects_duplicate_device_names(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

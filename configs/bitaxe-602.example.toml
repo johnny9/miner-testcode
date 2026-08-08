@@ -5,6 +5,8 @@ pattern = "test*.py"
 verbosity = 2
 log_level = "INFO"
 cleanup_timeout = 120
+# Enable only tests associated with target PR firmware. Empty by default.
+validation_prs = []
 
 [publishers.local]
 enabled = true

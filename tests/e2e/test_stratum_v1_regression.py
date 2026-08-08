@@ -4,7 +4,6 @@ import asyncio
 import inspect
 import json
 import os
-import unittest
 from collections.abc import Mapping
 from typing import Any
 
@@ -17,14 +16,13 @@ from miner_testcode.interfaces.fake_stratum import (
     ShareSubmission,
     StratumHandshake,
 )
-from miner_testcode.testcase import MinerTestCase
+from miner_testcode.testcase import MinerTestCase, validation_test
 
 
 class StratumV1RegressionTest(MinerTestCase):
     """Exercise the device Stratum client against a scriptable local pool."""
 
     class_scoped_lifecycle = True
-
     required_capabilities = frozenset(
         {caps.API, caps.MINING_STATE, caps.POOL_CONFIG, caps.STRATUM_V1}
     )
@@ -80,6 +78,7 @@ class StratumV1RegressionTest(MinerTestCase):
             super().tearDownClass()
 
     def setUp(self) -> None:
+        super().setUp()
         if type(self)._ordered_case_failed:
             self.skipTest("an earlier ordered Stratum feature failed")
 
@@ -444,10 +443,12 @@ class StratumV1RegressionTest(MinerTestCase):
             )
         )
 
-    @unittest.skip("requires the disabled Stratum parser hardening regressions")
-    async def test_90_fragmented_consecutive_and_boundary_messages(self) -> None:
-        server, settings, username = await self._start_local_pool()
-        handshake = await self._wait_for_handshake(server, settings, username)
+    async def _case_90_fragmented_consecutive_and_boundary_messages(
+        self,
+        server: FakeStratumV1Server,
+        handshake: StratumHandshake,
+        settings: Mapping[str, Any],
+    ) -> StratumHandshake:
         difficulty = float(settings.get("share_difficulty", 256.0))
         timeout = float(settings.get("share_timeout", 45.0))
         connection_id = handshake.connection_id
@@ -520,6 +521,7 @@ class StratumV1RegressionTest(MinerTestCase):
                 require_configure=True,
                 timeout=float(settings.get("reconnect_timeout", 45.0)),
             )
+            handshake = recovered
             connection_id = recovered.connection_id
             recovery_job = MiningJob.standard(
                 f"recovery-{label.lower().replace(' ', '-')}"
@@ -532,11 +534,14 @@ class StratumV1RegressionTest(MinerTestCase):
                 timeout=timeout,
             )
             self.chart(f"Recovered after {label}", status="good")
+        return handshake
 
-    @unittest.skip("requires the disabled Stratum parser hardening regressions")
-    async def test_91_invalid_messages_do_not_create_work_or_corrupt_state(self) -> None:
-        server, settings, username = await self._start_local_pool()
-        handshake = await self._wait_for_handshake(server, settings, username)
+    async def _case_91_invalid_messages_do_not_create_work_or_corrupt_state(
+        self,
+        server: FakeStratumV1Server,
+        handshake: StratumHandshake,
+        settings: Mapping[str, Any],
+    ) -> None:
         difficulty = float(settings.get("share_difficulty", 256.0))
         timeout = float(settings.get("share_timeout", 45.0))
         no_submit_window = float(settings.get("invalid_submit_window", 0.1))
@@ -573,46 +578,43 @@ class StratumV1RegressionTest(MinerTestCase):
         changed_notify("extra-locktime", 3, valid.coinbase_2 + "00")
 
         for index, (name, payload) in enumerate(notify_cases, start=1):
-            with self.subTest(case=name):
-                before = await self.device.current_info()
-                work_before = int(before.get("workReceived") or 0)
-                after = self._latest_sequence(server)
-                await server.send_json(
-                    payload,
-                    session=connection_id,
-                    label=f"invalid-notify:{name}",
-                )
-                barrier += 1
-                await self._processing_barrier(
-                    server, connection_id, barrier
-                )
-                await server.assert_no_submission(
-                    job_id=str(payload["params"][0]),
-                    after_sequence=after,
-                    duration=no_submit_window,
-                )
-                work_after = int(
-                    (await self.device.current_info()).get("workReceived") or 0
-                )
-                self.assertEqual(
-                    work_after,
-                    work_before,
-                    f"invalid {name} notification changed workReceived",
-                )
+            before = await self.device.current_info()
+            work_before = int(before.get("workReceived") or 0)
+            after = self._latest_sequence(server)
+            await server.send_json(
+                payload,
+                session=connection_id,
+                label=f"invalid-notify:{name}",
+            )
+            barrier += 1
+            await self._processing_barrier(server, connection_id, barrier)
+            await server.assert_no_submission(
+                job_id=str(payload["params"][0]),
+                after_sequence=after,
+                duration=no_submit_window,
+            )
+            work_after = int(
+                (await self.device.current_info()).get("workReceived") or 0
+            )
+            self.assertEqual(
+                work_after,
+                work_before,
+                f"invalid {name} notification changed workReceived",
+            )
 
-                recovery = MiningJob.standard(f"valid-after-{name}")
-                submission = await self._mine_one_share(
-                    server,
-                    recovery,
-                    difficulty=difficulty,
-                    connection_id=connection_id,
-                    timeout=timeout,
-                )
-                self.assertEqual(
-                    len(submission.extranonce2), expected_extranonce2_chars
-                )
-                await self._park_work(server, connection_id, index)
-                self.chart(f"Rejected {name} and accepted successor", status="good")
+            recovery = MiningJob.standard(f"valid-after-{name}")
+            submission = await self._mine_one_share(
+                server,
+                recovery,
+                difficulty=difficulty,
+                connection_id=connection_id,
+                timeout=timeout,
+            )
+            self.assertEqual(
+                len(submission.extranonce2), expected_extranonce2_chars
+            )
+            await self._park_work(server, connection_id, index)
+            self.chart(f"Rejected {name} and accepted successor", status="good")
 
         state_cases: list[tuple[str, bytes]] = [
             ("non-object", b"[]\n"),
@@ -644,37 +646,59 @@ class StratumV1RegressionTest(MinerTestCase):
         ]
 
         for offset, (name, payload) in enumerate(state_cases, start=1):
-            with self.subTest(case=name):
-                state_before = await self.device.current_info()
-                work_before = int(state_before.get("workReceived") or 0)
-                difficulty_before = float(state_before.get("poolDifficulty") or 0)
-                await server.send_raw(
-                    payload,
-                    session=connection_id,
-                    label=f"invalid-message:{name}",
-                )
-                barrier += 1
-                await self._processing_barrier(server, connection_id, barrier)
-                state_after = await self.device.current_info()
-                work_after = int(state_after.get("workReceived") or 0)
-                self.assertEqual(work_after, work_before)
-                if name in {"fractional-id", "zero-difficulty"}:
-                    self.assertEqual(
-                        float(state_after.get("poolDifficulty") or 0),
-                        difficulty_before,
-                        f"invalid {name} changed pool difficulty",
-                    )
-
-                recovery = MiningJob.standard(f"valid-after-{name}")
-                submission = await self._mine_one_share(
-                    server,
-                    recovery,
-                    difficulty=difficulty,
-                    connection_id=connection_id,
-                    timeout=timeout,
-                )
+            state_before = await self.device.current_info()
+            work_before = int(state_before.get("workReceived") or 0)
+            difficulty_before = float(state_before.get("poolDifficulty") or 0)
+            await server.send_raw(
+                payload,
+                session=connection_id,
+                label=f"invalid-message:{name}",
+            )
+            barrier += 1
+            await self._processing_barrier(server, connection_id, barrier)
+            state_after = await self.device.current_info()
+            work_after = int(state_after.get("workReceived") or 0)
+            self.assertEqual(work_after, work_before)
+            if name in {"fractional-id", "zero-difficulty"}:
                 self.assertEqual(
-                    len(submission.extranonce2), expected_extranonce2_chars
+                    float(state_after.get("poolDifficulty") or 0),
+                    difficulty_before,
+                    f"invalid {name} changed pool difficulty",
                 )
-                await self._park_work(server, connection_id, 100 + offset)
-                self.chart(f"State survived {name}", status="good")
+
+            recovery = MiningJob.standard(f"valid-after-{name}")
+            submission = await self._mine_one_share(
+                server,
+                recovery,
+                difficulty=difficulty,
+                connection_id=connection_id,
+                timeout=timeout,
+            )
+            self.assertEqual(
+                len(submission.extranonce2), expected_extranonce2_chars
+            )
+            await self._park_work(server, connection_id, 100 + offset)
+            self.chart(f"State survived {name}", status="good")
+
+    @validation_test(1849)
+    def test_90_fragmented_consecutive_and_boundary_messages(self) -> None:
+        async def run() -> None:
+            type(self)._handshake = (
+                await self._case_90_fragmented_consecutive_and_boundary_messages(
+                    type(self)._server,
+                    type(self)._handshake,
+                    type(self)._settings,
+                )
+            )
+
+        self._run_ordered_case(run())
+
+    @validation_test(1849)
+    def test_91_invalid_messages_do_not_create_work_or_corrupt_state(self) -> None:
+        self._run_ordered_case(
+            self._case_91_invalid_messages_do_not_create_work_or_corrupt_state(
+                type(self)._server,
+                type(self)._handshake,
+                type(self)._settings,
+            )
+        )
