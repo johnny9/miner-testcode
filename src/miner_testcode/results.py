@@ -65,6 +65,7 @@ class RunSummary:
     unexpected_successes: int
     successful: bool
     test_code: TestCodeRecord | None = None
+    orchestration: dict[str, Any] | None = None
     publishers: list[PublisherRecord] = field(default_factory=list)
 
     @property
@@ -147,6 +148,7 @@ class RunSummary:
             },
             "devices": list(self.devices),
             "test_code": asdict(self.test_code) if self.test_code else None,
+            "orchestration": self.orchestration,
             "tests": tests,
             "publishers": [asdict(record) for record in self.publishers],
         }

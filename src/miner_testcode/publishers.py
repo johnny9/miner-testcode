@@ -694,8 +694,8 @@ class MiningQaStatusPublisher:
             self.config,
             "external_run_id",
             env_key="external_run_id_env",
-            default_env="GITHUB_RUN_ID",
-        ) or summary.run_id
+            default_env="MINER_TEST_EXTERNAL_RUN_ID",
+        ) or os.environ.get("GITHUB_RUN_ID") or summary.run_id
         server = os.environ.get("GITHUB_SERVER_URL", "https://github.com").rstrip("/")
         github_run_id = os.environ.get("GITHUB_RUN_ID")
         external_url = _configured_value(
@@ -762,6 +762,7 @@ class MiningQaStatusPublisher:
                 "result": summary.to_dict(
                     detail_limit=2000, include_telemetry=False
                 ),
+                "orchestration": summary.orchestration,
             },
         }
         pr_number = self._pr_number()
@@ -775,6 +776,9 @@ class MiningQaStatusPublisher:
         if value is not None:
             number = int(value)
             return number if number > 0 else None
+        orchestrated = os.environ.get("MINER_TEST_PR_NUMBER", "").strip()
+        if orchestrated.isdigit() and int(orchestrated) > 0:
+            return int(orchestrated)
         event_path = os.environ.get("GITHUB_EVENT_PATH")
         if not event_path:
             return None

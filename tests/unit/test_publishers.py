@@ -162,6 +162,12 @@ def make_summary(root: Path, *, successful: bool = True) -> RunSummary:
             url="https://github.com/owner/miner-testcode",
             published=True,
         ),
+        orchestration={
+            "gate_id": "firmware-smoke",
+            "gate_run_id": "gate-run-1",
+            "assignment_id": "assignment-1",
+            "trigger": {"type": "pull_request"},
+        },
     )
 
 
@@ -370,6 +376,10 @@ class RemotePublisherTest(unittest.TestCase):
         self.assertEqual(
             result_payload["details"]["telemetry"][0]["markers"][0]["label"],
             "Pool configured",
+        )
+        self.assertEqual(
+            result_payload["details"]["orchestration"]["gate_run_id"],
+            "gate-run-1",
         )
         self.assertNotIn(
             "telemetry", result_payload["details"]["result"]["tests"][0]

@@ -4,12 +4,20 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from miner_testcode.config import ConfigError, load_config
-from miner_testcode.runner import build_parser
+from miner_testcode.runner import _orchestration_metadata, build_parser
 
 
 class ConfigTest(unittest.TestCase):
+    def test_loads_bounded_orchestration_metadata(self) -> None:
+        with mock.patch.dict(
+            os.environ,
+            {"MINER_TEST_ORCHESTRATION_METADATA": '{"gate_run_id":"run-1"}'},
+        ):
+            self.assertEqual(_orchestration_metadata(), {"gate_run_id": "run-1"})
+
     def test_cli_can_select_validation_prs(self) -> None:
         self.assertEqual(build_parser().parse_args([]).validation_pr, [])
         self.assertEqual(

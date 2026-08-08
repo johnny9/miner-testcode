@@ -8,6 +8,7 @@ import os
 import sys
 import time
 import unittest
+from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
 from typing import Iterator
@@ -19,6 +20,30 @@ from .provenance import ResolvedTestCode, resolve_test_code
 from .redaction import PrivacyFormatter, redact_text, sanitize_artifacts
 from .results import RunSummary, TestRecord
 from .testcase import MinerTestCase, TestContext
+
+
+_MAX_ORCHESTRATION_METADATA_BYTES = 64 * 1024
+
+
+def _orchestration_metadata() -> dict[str, object] | None:
+    raw = os.environ.get("MINER_TEST_ORCHESTRATION_METADATA", "").strip()
+    if not raw:
+        return None
+    if len(raw.encode("utf-8")) > _MAX_ORCHESTRATION_METADATA_BYTES:
+        raise ConfigError("orchestration metadata exceeds 64 KiB")
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ConfigError("MINER_TEST_ORCHESTRATION_METADATA must be JSON") from exc
+    if not isinstance(value, dict):
+        raise ConfigError("MINER_TEST_ORCHESTRATION_METADATA must be a JSON object")
+    return value
+
+
+@dataclass(frozen=True, slots=True)
+class RunOutcome:
+    successful: bool
+    summary: RunSummary
 
 
 def _iter_tests(suite: unittest.TestSuite) -> Iterator[unittest.TestCase]:
@@ -283,7 +308,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def run(argv: list[str] | None = None) -> bool:
+def execute(argv: list[str] | None = None) -> RunOutcome:
     args = build_parser().parse_args(argv)
     project = load_config(args.config)
     invalid_cli_prs = [number for number in args.validation_pr if number <= 0]
@@ -383,6 +408,7 @@ def run(argv: list[str] | None = None) -> bool:
         unexpected_successes=len(result.unexpectedSuccesses),
         successful=result.wasSuccessful(),
         test_code=test_code.record,
+        orchestration=_orchestration_metadata(),
     )
     for handler in logging.getLogger().handlers:
         handler.flush()
@@ -398,7 +424,40 @@ def run(argv: list[str] | None = None) -> bool:
         publishers_ok,
         artifacts.run_id,
     )
-    return result.wasSuccessful() and publishers_ok
+    successful = result.wasSuccessful() and publishers_ok
+    pointer = os.environ.get("MINER_TEST_RESULT_POINTER", "").strip()
+    if pointer:
+        pointer_path = Path(pointer).expanduser().resolve()
+        pointer_path.parent.mkdir(parents=True, exist_ok=True)
+        pointer_path.write_text(
+            json.dumps(
+                {
+                    "successful": successful,
+                    "status": summary.status,
+                    "run_id": summary.run_id,
+                    "artifact_root": str(summary.artifact_root),
+                    "publishers": [
+                        {
+                            "name": item.name,
+                            "success": item.success,
+                            "required": item.required,
+                            "url": item.url,
+                            "detail": item.detail,
+                        }
+                        for item in summary.publishers
+                    ],
+                },
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+    return RunOutcome(successful=successful, summary=summary)
+
+
+def run(argv: list[str] | None = None) -> bool:
+    return execute(argv).successful
 
 
 def main(argv: list[str] | None = None) -> int:
